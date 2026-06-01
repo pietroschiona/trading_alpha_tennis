@@ -1,0 +1,29 @@
+{
+  "test_1_binomial": {
+    "n_bets": 6067,
+    "wins": 3839,
+    "win_rate": 0.6328,
+    "z_score": 20.68,
+    "p_value": 2.4466274806614103e-96,
+    "ci_95": [
+      0.6206,
+      0.6448
+    ],
+    "significant": "True"
+  },
+  "test_2_monte_carlo": {
+    "n_simulations": 200000,
+    "observed_win_rate": 0.6328,
+    "pct_random_models_achieving_this": 0.0,
+    "p_value_approximation": 5e-06
+  },
+  "test_3_bayes_factor": {
+    "BF10": 1.0330570653816864e+94,
+    "evidence": "decisive"
+  },
+  "test_4_effect_size": {
+    "cohens_h": 0.2688,
+    "magnitude": "medium"
+  },
+  "anti_leakage": null
+}

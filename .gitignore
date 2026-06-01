@@ -1,0 +1,24 @@
+# Large data files (download via download_data.py)
+data/tennis_odds_data_cleaned.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Generated artifacts (regenerated on each run)
+walkforward_run.log
+walkforward_run_v2.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Historical notes (stale)
+HANDOFF.md
+
+# Run logs
+walkforward_run*.log

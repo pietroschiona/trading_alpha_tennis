@@ -1,0 +1,13 @@
+TRADING ALPHA - Walk-Forward Results (Pinnacle Opening Odds)
+Periodo: 2017-2025 (9 years out-of-sample)
+Training: 2013-2016 (4 years warmup, Pinnacle coverage >90%)
+Data: 55,049 ATP matches with Pinnacle opening odds (53% overall, 80-94% betting years)
+Time: ~490s
+Bets: 6271
+Wins: 4101/6271 (65.4%)
+
+Flat: EUR 20,447 (P: +EUR 19,447)
+Perc: EUR 1,094,295 (P: +EUR 1,093,295)
+Kelly: EUR 1,318,427 (P: +EUR 1,317,427)
+Reference: EUR 48,747 (P: +EUR 47,747)
+RL_Agent: EUR 3,293,446 (P: +EUR 3,292,446)
