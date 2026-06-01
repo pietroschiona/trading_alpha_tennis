@@ -50,22 +50,23 @@ Trading Alpha is a research-grade hybrid ML system combining deep learning (Siam
 
   +---------------------------+   +---------------------------+
   |   BLIND ANALYST (Head 1)  |   |   XGBoost Censor          |
-  |   Siamese Network          |   |   + Fits on NN residuals  |
-  |   + Twin towers (shared)   |   |   + Windowed memory      |
-  |   + Player A vs B          |   |   + Veto if overconfident |
-  |   + Surface ELO + stats    |   +-----------+---------------+
-  +------------+---------------+               |
-               +---------------+---------------+
+  |   Siamese Network         |   |   + Fits on NN residuals  |
+  |   + Twin towers (shared)  |   |   + Windowed memory       |
+  |   + Player A vs B         |   |   + Veto if overconfident |
+  |   + Surface ELO + stats   |   +-----------+---------------+
+  +------------+--------------+               |
+               |                              |
+               +---------------+--------------+
                                |
                       +--------+--------+
-                      |   ENSEMBLE       |
-                      |   Predictor      |
+                      |   ENSEMBLE      |
+                      |   Predicto      |
                       +--------+--------+
                                |
                       +--------+--------+
-                      | AWARE TRADER     |
-                      | (Head 2: RL)     |
-                      | Policy gradient  |
+                      | AWARE TRADER    |
+                      | (Head 2: RL)    |
+                      | Policy gradient |
                       +--------+--------+
                                |
                     RISK MANAGEMENT
@@ -83,14 +84,14 @@ Input: [Player A stats, Player B stats, Physical context, Market context]
          +----------+-----------+
          |                      |
 +--------+--------+   +---------+---------+
-|  HEAD 1:         |   |  HEAD 2:          |
+|  HEAD 1:        |   |  HEAD 2:          |
 |  BLIND ANALYST  |   |  AWARE TRADER     |
-|                  |   |                   |
+|                 |   |                   |
 |  Input:         |   |  Input:           |
 |  + Player A     |   |  + Analyst opinion|
 |  + Player B     |   |  + Market context |
 |  + Physics ctx  |   |  + Player features|
-|                  |   |                   |
+|                 |   |                   |
 |  Output:        |   |  Output:          |
 |  win_prob       |   |  stake_fraction   |
 |  (sigmoid)      |   |  (0 to 5% bank)   |
@@ -366,7 +367,7 @@ A: Research-grade. The architecture and methodology are appropriate for producti
 
 ## License
 
-MIT
+Apache License 2.0
 
 ## Author
 
