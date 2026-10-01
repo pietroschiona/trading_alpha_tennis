@@ -176,6 +176,35 @@ def run_anti_leakage_test(
     }
 
 
+def run_duplicate_check(csv_path: str) -> dict:
+    """Test 6: duplicate-match check (regression for the Reddit-reported leak).
+
+    The shipped v36 dataset contained 1,579 duplicate (Date, winner, loser) rows
+    caused by a many-to-many year+player merge. Distinct matches collapsed onto
+    one Date leak the outcome into h2h_ratio. This must stay at 0.
+    """
+    df = pd.read_csv(
+        csv_path,
+        low_memory=False,
+        usecols=lambda c: c in ("Date", "winner_name", "loser_name", "Winner", "Loser"),
+    )
+    if "winner_name" in df.columns:
+        df = df.rename(columns={"winner_name": "Winner", "loser_name": "Loser"})
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date", "Winner", "Loser"])
+
+    dup_mask = df.duplicated(subset=["Date", "Winner", "Loser"], keep=False)
+    n_dup_rows = int(dup_mask.sum())
+    n_dup_groups = int(df.loc[dup_mask].groupby(["Date", "Winner", "Loser"]).ngroups)
+
+    return {
+        "total_rows": len(df),
+        "duplicate_rows": n_dup_rows,
+        "duplicate_groups": n_dup_groups,
+        "passed": n_dup_rows == 0,
+    }
+
+
 def format_report(tests: dict, results: dict) -> str:
     """Format all test results as a markdown report"""
     t1 = tests["test_1_binomial"]

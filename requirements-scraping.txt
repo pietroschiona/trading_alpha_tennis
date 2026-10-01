@@ -1,0 +1,6 @@
+# Scraper tennisexplorer (scraper/) — Selenium + proxy rotation
+selenium>=4.15
+webdriver-manager>=4.0
+beautifulsoup4>=4.12
+requests>=2.31
+psutil>=5.9

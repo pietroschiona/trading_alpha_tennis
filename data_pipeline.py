@@ -78,7 +78,7 @@ MIN_VALID_ODDS = 1.01         # Minimum valid odds threshold
 MAX_VALID_ODDS = 100.0        # Maximum valid odds threshold
 
 # --- MERGE PARAMETERS ---
-DATE_TOLERANCE_DAYS = 15      # Maximum days difference for match-odds alignment
+DATE_TOLERANCE_DAYS = 7       # Max days diff for match-odds alignment (tourney Monday vs actual date)
 
 # --- LOGGING ---
 LOG_LEVEL = logging.INFO
@@ -273,8 +273,10 @@ def load_odds():
             valid['winner_std'] = valid['Winner'].apply(standardize_name_strict)
             valid['loser_std'] = valid['Loser'].apply(standardize_name_strict)
             
-            # Keep Comment for Fragility Index
+            # Keep Comment for Fragility Index; Wsets = identity fingerprint for merge
             keep_cols = ['Date', 'winner_std', 'loser_std', 'AvgW', 'AvgL', 'MaxW', 'MaxL']
+            if 'Wsets' in valid.columns:
+                keep_cols.append('Wsets')
             if 'Comment' in valid.columns:
                 keep_cols.append('Comment')
             else:
@@ -591,27 +593,55 @@ def smart_merge(df_m, df_o):
     
     # Inner Join on loose key
     merged = pd.merge(df_m, df_o, on='key', how='inner', suffixes=('_match', '_odds'))
-    
+
     # Restore names from match source (usually cleaner)
     merged['winner_std'] = merged['winner_std_match']
     merged['loser_std'] = merged['loser_std_match']
-    
+
     # --- DATE PROXIMITY FILTER ---
     # Date_match: Tournament Start Date (often Monday)
     # Date_odds: Actual Match Date (accurate)
-    # We allow a wide window (DATE_TOLERANCE_DAYS) because TML dates are Tourney-Start based
+    # We allow a narrow window because a loose tolerance merges distinct matches
+    # between the same two players at different tournaments within the same year
+    # (the data leakage documented in the Reddit post-mortem).
     merged['diff_days'] = (merged['Date_match'] - merged['Date_odds']).dt.days.abs()
-    
+
     valid_merge = merged[merged['diff_days'] <= DATE_TOLERANCE_DAYS].copy()
-    
-    # --- CRITICAL: BEST MATCH SELECTION ---
-    # If duplicates exist (same players played twice in same tourney/year? rare but possible),
-    # or multiple odds lines found, pick the one with closest date match.
-    valid_merge = valid_merge.sort_values('diff_days')
-    
-    # Unique Key: Date_match (Tourney) + Players. 
-    # This ensures we attach odds to the correct tournament round.
-    final = valid_merge.drop_duplicates(subset=['Date_match', 'winner_std', 'loser_std'], keep='first')
+
+    # --- IDENTITY CHECK VIA SETS WON ---
+    # Distinct matches between the same two players in the same tournament window
+    # (e.g. R16 and QF played days apart) share the year+player key. The number of
+    # sets won by the winner (from the raw score) is an outcome-independent
+    # fingerprint: only pairings where it agrees survive.
+    import re as _re
+
+    def _sets_won_by_winner(score):
+        try:
+            sets = _re.findall(r'(\d+)\s*-\s*(\d+)', str(score))
+            return sum(1 for a, b in sets if int(a) > int(b))
+        except Exception:
+            return -1
+
+    if 'score' in valid_merge.columns and 'Wsets' in valid_merge.columns:
+        valid_merge['_w_sets'] = valid_merge['score'].map(_sets_won_by_winner)
+        valid_merge['_odds_w_sets'] = pd.to_numeric(valid_merge['Wsets'], errors='coerce').fillna(-1)
+        n_before = len(valid_merge)
+        valid_merge = valid_merge[valid_merge['_w_sets'] == valid_merge['_odds_w_sets']]
+        logger.info(f"      Identity check (sets won): {n_before} -> {len(valid_merge)} pairings")
+
+    # --- CRITICAL: ONE-TO-ONE MATCH SELECTION (ANTI-LEAKAGE) ---
+    # The old many-to-many + drop_duplicates on (Date_match, players) collapsed
+    # distinct real matches onto one row and duplicated survivors ~4x. Instead:
+    # for each PAIR of (match, odds-line) keep only the closest-date pairing,
+    # then enforce one-to-one by dropping already-consumed odds lines.
+    valid_merge = valid_merge.sort_values(['diff_days', 'Date_odds'])
+    pair_key = ['Date_match', 'winner_std', 'loser_std', 'Date_odds']
+    best_pairs = valid_merge.drop_duplicates(subset=pair_key, keep='first')
+
+    # One-to-one: each odds line may feed at most one match, and each match row
+    # receives at most one odds line. Closest date wins on both sides.
+    final = best_pairs.drop_duplicates(subset=['Date_match', 'winner_std', 'loser_std'], keep='first')
+    final = final.drop_duplicates(subset=['key', 'Date_odds'], keep='first')
     
     # --- FINAL DATE FIX ---
     # We MUST use Date_odds (Actual Match Day) for time-series strictness.

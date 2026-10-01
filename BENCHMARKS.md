@@ -1,15 +1,47 @@
 # Trading Alpha -- Scientific Benchmarks
 
-**Methodology:** 6-test empirical validation framework  
-**Data:** 55,049 ATP matches (2001-2025), Pinnacle opening odds 80-94% coverage  
-**Model:** Hydra-Oracle (Siamese NN + XGBoost + RL) -- walk-forward validated  
-**Status:** Results statistically significant (p < 1e-95), effect size medium (h = 0.269)
+> ## ⚠️ DOCUMENTO ANNULATO (2026-10)
+>
+> Tutti i risultati qui sotto descrivono il dataset **leakato** (55.049 righe, merge
+> many-to-many in `smart_merge`). Non sono riproducibili e non sono un edge: il modello batteva
+> il benchmark di mercato perché le quote erano abbinate ai match sbagliati, non perché avesse
+> trovato segnale.
+>
+> Il punto di riferimento onesto è il **Brier di mercato 0.2035** (2018+), misurato sul dataset
+> riparato. Non 0.1974, che era il numero del dataset contaminato.
+>
+> Verifica: `python verify_leak_fix.py`. Dettagli: [README § Post-Mortem](README.md#post-mortem-il-leak).
+>
+> **Cosa insegna**: un test statistico che passa con p < 1e-95 *non* dimostra un edge. Dimostra
+> solo che il campione è grande e che il segnale è nonzero — il p-value è insensibile al fatto che
+> il segnale sia informazione legittima o rumore di allineamento. Il test anti-leakage va **prima**
+> di ogni test di significatività, non dopo.
+
+**Methodology:** 6-test empirical validation framework — **results VOID**
+**Data (leakato):** 55,049 ATP matches (2001-2025)
+**Data (riparato):** 24,494 ATP matches (2013-2025), TML-Database + tennis-data.co.uk
+**Model:** Hydra-Oracle (Siamese NN + XGBoost + RL) -- walk-forward validated
+**Status:** leak corretto e verificato; prestazioni sul dataset riparato **non ancora misurate**
 
 ---
 
-## 1. Statistical Significance Test
+## 0. Anti-Leakage (ora prima di tutto)
 
-**Question:** Is the 63.3% win rate on 6,067 bets statistically different from random (50%)?
+| Controllo | Leakato | Riparato | Atteso |
+|---|---|---|---|
+| Righe duplicate (Date, winner, loser) | 1.579 | **0** | 0 |
+| `corr(h2h_ratio, outcome)` | +0.336 | **+0.091** | ~0.11 |
+| Brier di mercato (2018+) | 0.1974 | **0.2035** | riferimento |
+| Brier del modello | 0.1909 (**sotto il mercato**) | da misurare | ≥ mercato |
+
+---
+
+## 1. Statistical Significance Test — [ANNULATO]
+
+I test seguenti restano utili come esempio di *cosa non basta*. Erano tutti "passati" su dati
+leakati.
+
+**Question (storica):** Is the 63.3% win rate on 6,067 bets statistically different from random (50%)?
 
 | Test | Result | Verdict |
 |---|---|---|
@@ -19,11 +51,14 @@
 | Bayes Factor BF10 | ~ 1e94 | Decisive evidence for H1 |
 | Cohen's h | 0.269 | Medium effect size |
 
-**Conclusion:** The probability of achieving 63.3% on 6,067 bets by chance is less than 1 in 1e95. The model is genuinely learning predictive patterns.
+**Conclusione storica (annullata):** ~~The probability of achieving 63.3% on 6,067 bets by chance is less than 1 in 1e95. The model is genuinely learning predictive patterns.~~
+
+**Conclusione corretta:** la probabilità è bassa, ma la quantità misurata non era "accuratezza
+predittiva": era la quantità di informazione che il dataset leakato dava al modello per free.
 
 ---
 
-## 2. Anti-Leakage Validation
+## 2. Anti-Leakage Validation (storico — [ANNULATO])
 
 **Question:** Does the ~16% fallback to closing odds (when Pinnacle opening odds are unavailable) introduce data leakage?
 
@@ -63,7 +98,7 @@ The model cannot find false edges on fallback matches because opening and closin
 
 ---
 
-## 3. Ablation Study: Debiasing Effect
+## 3. Ablation Study: Debiasing Effect — [ANNULATO]
 
 **Question:** What does the OddsDebiaser contribute?
 
@@ -83,7 +118,7 @@ The debiaser is a Ridge regression trained online to map opening probability (fr
 
 ---
 
-## 4. Strategy Comparison
+## 4. Strategy Comparison — [ANNULATO]
 
 **Question:** How do different betting strategies perform on the same prediction signal?
 
@@ -97,14 +132,14 @@ All strategies use the same win probability from the model's value head. They di
 | Reference | Adaptive Kelly | EUR 59,431 | ~EUR 4K |
 | RL_Agent | Policy gradient (0-5%) | EUR 3,979,788 | ~EUR 180K |
 
-**RL_Agent outperforms by 67x vs Reference strategy** -- the policy gradient learns:
+**RL_Agent outperforms by 67x vs Reference strategy** *(annullato — su dati leakati)* -- the policy gradient learns:
 - When to stake aggressively (high confidence, low variance)
 - When to scale back (unfamiliar market conditions)
 - When to sit out entirely (CUSUM drift detected or XGB veto active)
 
 ---
 
-## 5. Baseline Comparison
+## 5. Baseline Comparison — [ANNULATO]
 
 **Question:** How does the full model compare against simpler approaches?
 
@@ -114,15 +149,22 @@ All strategies use the same win probability from the model's value head. They di
 | Logistic Regression (ELO + rank) | 50.0% | 0.500 | 0.250 |
 | Hybrid Model (on 6,067 selected bets) | 63.3% | -- | -- |
 
-**Interpretation:**
-- The market (Pinnacle opening odds) predicts all matches at 69.4% -- this is the efficiency baseline
-- Logistic Regression on ELO alone fails -- ELO needs non-linear interactions to be predictive
-- The Hybrid Model achieves 63.3% on selected bets only -- it identifies a subset where the market drift is predictable
-- The model does not beat the market on all matches -- it finds specific opportunities where the market will move favorably
+**Interpretation (storica, annullata):**
+- ~~The market predicts all matches at 69.4% — this is the efficiency baseline~~
+- ~~Logistic Regression on ELO alone fails — ELO needs non-linear interactions~~
+- ~~The Hybrid Model achieves 63.3% on selected bets only — it identifies a subset where the market drift is predictable~~
+
+**Correzione:** la riga "Hybrid Model" è il Brier 0.1909 contro 0.199 di mercato — cioè il modello
+*vinceva*. Su un mercato efficiente come Pinnacle, un modello che vince stabilmente è più
+probabilmente disallineato che bravo. Il Brier corretto sul dataset riparato è **0.2035** e
+costituisce il riferimento da battere.
+
+Il confronto "mercato 69.4% vs modello 63.3% su subset" era inoltre un confronto scorretto: WR
+selezionato e WRglobale non sono confrontabili, perché il subset è scelto dall'edge del modello.
 
 ---
 
-## 6. Sensitivity Analysis
+## 6. Sensitivity Analysis — [ANNULATO]
 
 **Question:** How stable are the results to parameter changes?
 
@@ -152,25 +194,39 @@ The 5.1 percentage point drop confirms that the earlier training data (2001-2012
 - [x] Online learning (no data snooping)?
 - [x] Symmetry augmentation documented?
 - [x] Hyperparameters reported? (top of hydra_model.py)
-- [x] Results include confidence intervals? (this document)
-- [x] Anti-leakage design validated? (this document)
-- [x] Code available for review? (MIT license)
+- [x] **Merge match↔odds one-to-one? (post-fix in `data_pipeline.py`)**
+- [x] **Zero duplicate (Date, winner, loser)? (`verify_leak_fix.py`)**
+- [x] **`corr(h2h_ratio, outcome) < 0.15`? (`verify_leak_fix.py`)**
+- [ ] **Prestazioni sul dataset riparato misurate?**
+- [ ] **Brier del modello ≥ Brier di mercato (0.2035)?**
+
+Le ultime due voci restano aperte: non c'è ancora un edge dimostrato.
 
 ---
 
 ## Quick Replication
 
 ```bash
-# 1. Install dependencies
-pip install tensorflow xgboost scikit-learn pandas numpy matplotlib tqdm unidecode
+# 1. Dependencies
+pip install -r requirements.txt
 
-# 2. Run the full benchmark
+# 2. Raw data
+python download_data.py
+
+# 3. Rebuild dataset
+python data_pipeline.py
+
+# 4. ANTI-LEAK CHECK — non saltarlo
+python verify_leak_fix.py
+
+# 5. Train + backtest
 python -c "import hydra_model as m; m.main()"
+python run_benchmarks.py --quick
 
-# Expected run time: ~8 minutes
-# Output: walkforward_results.txt, charts/*.png
+# Output: walkforward_results.txt, charts/*.png, benchmarks/
 ```
 
 ---
 
-*Benchmarks generated by the Trading Alpha validation framework. All tests are empirically verified and independently reproducible.*
+*I test statistici di questo documento descrivevano un dataset leakato e sono annullati. La
+verifica riproducibile oggi è `verify_leak_fix.py`.*
