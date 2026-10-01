@@ -9,13 +9,26 @@ Il claim originale "63.3% WR / +30% ROI" era un **leak**, non un edge (segnalato
 r/algobetting, thread `1tviwt7`). Causa: `smart_merge` in `data_pipeline.py` faceva join odds↔match
 su anno+giocatore con tolerance 15 giorni → match distinti fra gli stessi giocatori collassati su
 una riga, `h2h_ratio` (shift/cumsum su `Date`) encodava l'esito del match corrente (corr 0.336 vs ~0.11 reale).
-Fix: merge one-to-one, `DATE_TOLERANCE_DAYS = 3`, dedup su chiave reale. Non regredire.
+Fix: merge one-to-one nearest-date, identity check sui set vinti dal vincitore, dedup su chiave reale,
+`DATE_TOLERANCE_DAYS = 7` (la `tourney_date` TML è il lunedì del torneo; con 3 si perdeva il 25% delle
+coppie legittime). Non regredire.
 
 **Regole anti-leakage (non negoziabili):**
 - Mai merge su chiave anno+giocatore senza filtro data stretta; ogni riga match ↔ max una riga odds.
 - Qualunque feature storica (EWMA, h2h, fatigue) usa solo date **strettamente precedenti** (`shift(1)`).
 - Prima di credere a un edge: corr(feature, target) > 0.15 su una singola feature pre-match = sospetto leak.
-- Test di regressione: `python run_benchmarks.py` — l'assert anti-leakage deve passare.
+- Test di regressione: `python verify_leak_fix.py` (0 duplicati, corr(h2h,outcome) < 0.15) e
+  `python run_benchmarks.py` (Test 6, duplicati). Entrambi devono passare **prima** di guardare i numeri.
+
+## Stato al 2026-10-01
+
+- ✅ Fix leak applicato e verificato: 24.494 righe, 0 duplicati, corr(h2h,outcome) **0.091**.
+- ✅ Scraper, raw e fonti recuperati e documentati in `docs/data-sources.md`.
+- ❌ **Prestazioni sul dataset riparato non ancora misurate**: serve `tensorflow`, non installato.
+  Finché non gira `hydra_model.py`, **non esiste alcun edge dimostrato**.
+- Riferimento da battere: **Brier di mercato 0.2035** (2018+), non 0.1974 (quello del dataset leakato).
+- Attenzione: il dataset attuale ha **solo quote closing**, quindi la separazione mattina/sera
+  dell'architettura non è alimentata da dati reali.
 
 ## Fonti dati (dettagli in `docs/data-sources.md`)
 
@@ -26,19 +39,24 @@ Fix: merge one-to-one, `DATE_TOLERANCE_DAYS = 3`, dedup su chiave reale. Non reg
 | Opening odds | `data/tennis_odds_data_cleaned.csv` (~1 GB, gitignored) — scraped da tennisexplorer.com. Master copy: `D:/Betting/codice/modello2torri2/tennis_odds_data_cleaned.csv` |
 | Scraper | `scraper/` — Selenium, tennisexplorer.com, recuperato da `D:/Betting/scraper_per_odds/prova3/` |
 
-Nessun CSV grande in git. Le fonti raw si ri-scaricano con i comandi in `docs/data-sources.md`.
+Nessun CSV grande in git. I raw si ri-scaricano con `python download_data.py` (URL e trappole in `docs/data-sources.md`).
 
 ## Comandi
 
 ```powershell
+python download_data.py                        # popola data/ con i raw
 python data_pipeline.py                        # rigenera tennis_features_v36.csv (~5 min)
-python -c "import hydra_model as m; m.main()" # training + backtest (~8 min)
-python run_benchmarks.py                       # 6 test statistici + anti-leakage
-python run_benchmarks.py --quick               # solo test statistici (~30 s)
+python verify_leak_fix.py                      # verifica anti-leak, DA FARE PRIMA DI OGNI NUMERO
+python -c "import hydra_model as m; m.main()"  # training + backtest (~8 min, richiede tensorflow)
+python run_benchmarks.py                       # 6 test statistici + Test 6 duplicati
+python run_benchmarks.py --quick               # salta solo il Test 5 (~30 s)
 ```
 
 Config: costanti in testa a `hydra_model.py` (START_YEAR=2013, BETTING_START_YEAR=2017) e
-`data_pipeline.py` (DATE_TOLERANCE_DAYS=3, YEAR range). Output: `benchmarks/`, `charts/`, `model_state/`.
+`data_pipeline.py` (DATE_TOLERANCE_DAYS=7, YEAR range). Output: `benchmarks/`, `charts/`, `model_state/`.
+
+`run_benchmarks.py` avvisa se `tennis_features_v36.csv` è più recente di `walkforward_results.txt`:
+in quel caso i test 1-4 descrivono il vecchio dataset e i loro p-value non sono da usare.
 
 ## Scraper
 
