@@ -40,5 +40,18 @@ data/match_odds/        ← tennis-data.co.uk annuali 2013–2025 (xlsx)
 data/tennis_odds_data_cleaned.csv ← copia da D:/Betting/codice/modello2torri2/ (scraped, ~1 GB)
 ```
 
+Scaricare i raw: `python download_data.py`.
+
+URL da usare (verificati 2026-10-01, il path di tennis-data cambia nel tempo):
+
+| Sorgente | Pattern | Note |
+|---|---|---|
+| TML-Database | `https://raw.githubusercontent.com/Tennismylife/TML-Database/master/<anno>.csv` | CSV **alla root** del repo, non in `csv/` |
+| tennis-data.co.uk | `http://tennis-data.co.uk/<segmento_offuscato>/<anno>/<anno>.xlsx` | il segmento cambia: rileggilo su [data.php](https://www.tennis-data.co.uk/data.php). Serve un `User-Agent`, altrimenti 403. |
+| odds 2000–2012 | `.../<anno>/<anno>.xls` | `.xls`, non `.xlsx`; il 2000 è solo risultati, senza quote |
+
 Rigenerazione dataset: `python data_pipeline.py` → `tennis_features_v36.csv`
-(con fix anti-leakage: merge one-to-one, dedup, tolerance 3 giorni).
+(con fix anti-leakage: merge one-to-one nearest-date, identity check sui set vinti dal
+vincitore, dedup su chiave reale, `DATE_TOLERANCE_DAYS = 7`).
+
+Verifica obbligatoria prima di credere a qualsiasi numero: `python verify_leak_fix.py`.

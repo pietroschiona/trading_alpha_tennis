@@ -180,8 +180,8 @@ def run_duplicate_check(csv_path: str) -> dict:
     """Test 6: duplicate-match check (regression for the Reddit-reported leak).
 
     The shipped v36 dataset contained 1,579 duplicate (Date, winner, loser) rows
-    caused by a many-to-many year+player merge. Distinct matches collapsed onto
-    one Date leak the outcome into h2h_ratio. This must stay at 0.
+    caused by a many-to-many year+player merge: distinct matches collapsed onto
+    one Date, which leaked the outcome into h2h_ratio. This must stay at 0.
     """
     df = pd.read_csv(
         csv_path,
@@ -264,6 +264,20 @@ def format_report(tests: dict, results: dict) -> str:
             "**Verdict:** ✅ Anti-leakage design verified. Zero false edges from fallback data.",
         ])
 
+    dc = tests.get("duplicate_check")
+    if dc:
+        lines.extend([
+            "",
+            "## Test 6: Duplicate-Match Regression Check",
+            "",
+            f"Rows checked: **{dc['total_rows']}**",
+            f"Duplicate (Date, winner, loser) rows: **{dc['duplicate_rows']}** in {dc['duplicate_groups']} groups",
+            "",
+            "**Verdict:** " + ("✅ No duplicates — the year+player merge leak is not back."
+                              if dc["passed"] else
+                              "❌ Duplicates present — the many-to-many merge has returned."),
+        ])
+
     lines.extend([
         "",
         "---",
@@ -274,6 +288,8 @@ def format_report(tests: dict, results: dict) -> str:
         f"{'✅' if t3['evidence'] in ('decisive','very_strong','strong') else '❌'} **Bayes Factor:** BF10 = {t3['BF10']:.1e}",
         f"{'✅' if t4['magnitude'] in ('medium','large') else '❌'} **Effect Size:** h = {t4['cohens_h']}",
         f"{'✅' if al and al.get('without_pinnacle', {}).get('edges_gt_1pct', 0) == 0 else '❌'} **Anti-Leakage:** Zero false edges from fallback",
+        (f"{'✅' if dc['passed'] else '❌'} **Duplicates:** {dc['duplicate_rows']} duplicate rows"
+         if dc else "⚠️ **Duplicates:** check skipped (dataset missing)"),
         "",
         f"**Overall: {'ALL TESTS PASSED' if t1['significant'] and t2['pct_random_models_achieving_this'] < 0.001 else 'SOME TESTS FAILED'}**",
     ])
@@ -316,20 +332,48 @@ def main():
     print("=" * 60)
     print(f"\nResults loaded: {results['total_bets']} bets, {results['win_rate']*100:.1f}% WR\n")
 
+    # Guard: these stats describe whatever dataset produced walkforward_results.txt.
+    # If the dataset was rebuilt after that file, every number below is stale.
+    dataset_path = BENCH_DIR / "tennis_features_v36.csv"
+    results_path = BENCH_DIR / "walkforward_results.txt"
+    stale = (
+        dataset_path.exists()
+        and results_path.exists()
+        and dataset_path.stat().st_mtime > results_path.stat().st_mtime
+    )
+    if stale:
+        print(
+            "⚠️  STALE RESULTS: tennis_features_v36.csv is newer than walkforward_results.txt.\n"
+            "    Tests 1-4 below describe the OLD dataset. Re-run hydra_model.py first,\n"
+            "    otherwise these p-values are meaningless.\n"
+        )
+
     # Run Tests 1-4 (statistical)
     print("Running Tests 1-4 (statistical analysis)...")
     tests = run_statistical_tests(results)
 
+    # Test 6: duplicate-match regression check. Cheap, needs no Pinnacle CSV,
+    # and must never be skipped: a nonzero count means the leak is back.
+    csv_path = BENCH_DIR / "tennis_features_v36.csv"
+    print("Running Test 6 (duplicate-match check)...")
+    if csv_path.exists():
+        dup = run_duplicate_check(str(csv_path))
+        tests["duplicate_check"] = dup
+        status = "✅ 0 duplicates" if dup["passed"] else f"❌ {dup['duplicate_rows']} duplicate rows"
+        print(f"  {status} ({dup['total_rows']} rows)")
+    else:
+        tests["duplicate_check"] = None
+        print(f"  ⚠️  {csv_path.name} not found — run data_pipeline.py first")
+
     # Run Test 5 (anti-leakage) unless --quick
     if not args.quick:
         print("Running Test 5 (anti-leakage verification)...")
-        csv_path = BENCH_DIR / "data" / "tennis_features_v36.csv"
         scraper_path = "D:/Betting/codice/modello2torri2/tennis_odds_data_cleaned.csv"
 
         if csv_path.exists() and os.path.exists(scraper_path):
             tests["anti_leakage"] = run_anti_leakage_test(str(csv_path), scraper_path)
         else:
-            print("  ⚠️  Skipping anti-leakage test — Pinnacle CSV not available")
+            print("  ⚠️  Skipping anti-leakage test — dataset or Pinnacle CSV not available")
             tests["anti_leakage"] = None
     else:
         tests["anti_leakage"] = None
