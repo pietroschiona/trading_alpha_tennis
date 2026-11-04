@@ -1,7 +1,9 @@
 # CLAUDE.md — trading_alpha_tennis
 
-Sistema ML per value betting tennistico (Hydra-Oracle: Siamese NN + XGBoost residual + RL staking).
-Python ≥3.10, Windows. Dipendenze: `pip install -r requirements.txt` (+ `requirements-scraping.txt` per lo scraper).
+Sistema ML per value betting tennistico (Hydra-Oracle: Siamese NN a 38 feature + XGBoost residual +
+stake head supervisionato; **niente RL**, vedi `hydra_model.py:76` e `hydra_model.py:838`).
+Python ≥3.10, Windows. Dipendenze: `pip install -r requirements.txt` (+ `requirements-scraping.txt`
+per lo scraper, `requirements-dev.txt` per i test).
 
 ## ⚠️ Lezione fondamentale: il data leakage del 2026-10
 
@@ -20,14 +22,16 @@ coppie legittime). Non regredire.
 - Test di regressione: `python verify_leak_fix.py` (0 duplicati, corr(h2h,outcome) < 0.15) e
   `python run_benchmarks.py` (Test 6, duplicati). Entrambi devono passare **prima** di guardare i numeri.
 
-## Stato al 2026-10-01
+## Stato al 2026-11-04
 
-- ✅ Fix leak applicato e verificato: 24.494 righe, 0 duplicati, corr(h2h,outcome) **0.091**.
+- ✅ Fix leak applicato e verificato: 29.535 righe, 0 duplicati, corr(h2h,outcome) **0.094**.
 - ✅ Scraper, raw e fonti recuperati e documentati in `docs/data-sources.md`.
-- ❌ **Prestazioni sul dataset riparato non ancora misurate**: serve `tensorflow`, non installato.
-  Finché non gira `hydra_model.py`, **non esiste alcun edge dimostrato**.
-- Riferimento da battere: **Brier di mercato 0.2035** (2018+), non 0.1974 (quello del dataset leakato).
-- Attenzione: il dataset attuale ha **solo quote closing**, quindi la separazione mattina/sera
+- ✅ TensorFlow installato: il run è stato misurato. **Nessun edge dimostrato.**
+  - 3.700 scommesse finanziate dalla stake head, 1.183 vittorie (**32.0%**), avg odds 4.27.
+  - Staked **32.229,04**, PnL **-1.000**, **ROI -3.10%**, CI 95% **[-10.19%, +4.13%]**, p=0.81.
+  - Flat, Kelly e StakeHead finiscono a 0 (bankrupt); Perc 173; Reference 985.
+- Riferimento da battere: **Brier di mercato 0.2037** (2018+), non 0.1974 (quello del dataset leakato).
+- Quote opening opzionali: copertura **0.0%** nel run misurato, quindi la separazione mattina/sera
   dell'architettura non è alimentata da dati reali.
 
 ## Fonti dati (dettagli in `docs/data-sources.md`)
@@ -36,8 +40,8 @@ coppie legittime). Non regredire.
 |---|---|
 | Match stats raw | `data/atp_matches_TML/` — TML-Database (github.com/Tennismylife/TML-Database), 2000–2025, schema Jeff Sackmann |
 | Closing odds | `data/match_odds/` — tennis-data.co.uk annuali 2013–2025 (xlsx). PSW/PSL = Pinnacle closing ~99%. **MaxW/AvgW NON sono opening** |
-| Opening odds | `data/tennis_odds_data_cleaned.csv` (~1 GB, gitignored) — scraped da tennisexplorer.com. Master copy: `D:/Betting/codice/modello2torri2/tennis_odds_data_cleaned.csv` |
-| Scraper | `scraper/` — Selenium, tennisexplorer.com, recuperato da `D:/Betting/scraper_per_odds/prova3/` |
+| Opening odds | `data/tennis_odds_data_cleaned.csv` (~1 GB, gitignored, non è in git) — scraped da tennisexplorer.com. Opzionali: senza, il rebuild usa le sole closing |
+| Scraper | `scraper/` — Selenium, tennisexplorer.com |
 
 Nessun CSV grande in git. I raw si ri-scaricano con `python download_data.py` (URL e trappole in `docs/data-sources.md`).
 
@@ -47,16 +51,18 @@ Nessun CSV grande in git. I raw si ri-scaricano con `python download_data.py` (U
 python download_data.py                        # popola data/ con i raw
 python data_pipeline.py                        # rigenera tennis_features_v36.csv (~5 min)
 python verify_leak_fix.py                      # verifica anti-leak, DA FARE PRIMA DI OGNI NUMERO
-python -c "import hydra_model as m; m.main()"  # training + backtest (~8 min, richiede tensorflow)
-python run_benchmarks.py                       # 6 test statistici + Test 6 duplicati
+python -c "import hydra_model as m; m.main()"  # training + backtest (~8 min)
+python run_benchmarks.py                       # return bootstrap + Test 5 drift opening/closing + Test 6 duplicati + Test 7 h2h
 python run_benchmarks.py --quick               # salta solo il Test 5 (~30 s)
+python -m pytest tests -q                      # test suite (requirements-dev.txt)
 ```
 
 Config: costanti in testa a `hydra_model.py` (START_YEAR=2013, BETTING_START_YEAR=2017) e
 `data_pipeline.py` (DATE_TOLERANCE_DAYS=7, YEAR range). Output: `benchmarks/`, `charts/`, `model_state/`.
 
-`run_benchmarks.py` avvisa se `tennis_features_v36.csv` è più recente di `walkforward_results.txt`:
-in quel caso i test 1-4 descrivono il vecchio dataset e i loro p-value non sono da usare.
+`run_benchmarks.py` rifiuta di pubblicare p-value se il sidecar `tennis_features_v36.meta.json`
+manca o se `sha256`/`rows` non coincidono con il dataset: in quel caso marca il report **VOID**
+ed esce con codice 1.
 
 ## Scraper
 

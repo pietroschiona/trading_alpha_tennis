@@ -25,7 +25,7 @@ Fatti verificati:
 1. **tennis-data.co.uk** — base closing 2013–2025 (file annuali in `data/match_odds/`, già scaricati).
    Zero sforzo, Pinnacle ~99%.
 2. **Scraper tennisexplorer** (`scraper/`) — unica fonte free di **opening** Pinnacle pre-2020;
-   dataset già prodotto: `D:/Betting/codice/modello2torri2/tennis_odds_data_cleaned.csv` (~1 GB).
+   dataset già prodotto: `data/tennis_odds_data_cleaned.csv` (~1 GB, non è in git).
    Per odds fresche: update settimanale.
 3. **OddsHarvester** — backfill gap dell'88.7% + fallback se tennisexplorer cambia layout.
    Feature flag `opening_missing` + imputazione quando manca.
@@ -37,7 +37,7 @@ Opzionale: The Odds API free tier per le odds pre-match dei match di domani (500
 ```
 data/atp_matches_TML/   ← TML-Database (github.com/Tennismylife/TML-Database), 2000–2025
 data/match_odds/        ← tennis-data.co.uk annuali 2013–2025 (xlsx)
-data/tennis_odds_data_cleaned.csv ← copia da D:/Betting/codice/modello2torri2/ (scraped, ~1 GB)
+data/tennis_odds_data_cleaned.csv ← scraped, ~1 GB (non è in git)
 ```
 
 Scaricare i raw: `python download_data.py`.

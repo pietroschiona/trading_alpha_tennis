@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 """
-Popola data/ con i dati grevi.
+Popola data/ con i dati grezzi.
 
   1. data/atp_matches_TML/  - TML-Database, 26 CSV annuali 2000-2025 (schema Jeff Sackmann)
   2. data/match_odds/       - tennis-data.co.uk, 13 XLSX annuali 2013-2025 (PSW/PSL = Pinnacle closing)
   3. data/tennis_odds_data_cleaned.csv - ~1 GB di quote opening scrapate (opzionale, vedi sotto)
 
 Uso:
-    python download_data.py           # scarica 1 e 2, cerca 3
-    python download_data.py --odds    # include la copia del CSV da 1 GB
+    python download_data.py           # scarica 1 e 2; 3 resta opzionale
+    python download_data.py --odds    # cerca anche il CSV da 1 GB in data/ o ~
 
 Poi: python data_pipeline.py  ->  tennis_features_v36.csv
 """
@@ -69,12 +69,13 @@ def main():
     print()
 
     # Optional: opening odds, ~1 GB, only obtainable by scraping (see scraper/)
-    for path in [
-        TARGET_PATH,
-        "D:/Betting/codice/modello2torri2/tennis_odds_data_cleaned.csv",
-        os.path.expanduser("~/tennis_odds_data_cleaned.csv"),
-    ]:
-        if os.path.exists(path):
+    if "--odds" not in sys.argv[1:]:
+        print("Quote opening (~1 GB) opzionali e non cercate: passare --odds per abilitarle.")
+        print("  Il dataset si ricostruisce con le sole closing odds (2013-2025).")
+    else:
+        for path in [TARGET_PATH, os.path.expanduser("~/tennis_odds_data_cleaned.csv")]:
+            if not os.path.exists(path):
+                continue
             if os.path.abspath(path) != os.path.abspath(TARGET_PATH):
                 print(f"Quote opening trovate in {path}")
                 try:
@@ -85,10 +86,10 @@ def main():
             else:
                 print(f"Quote opening gia' in {TARGET_PATH} ({os.path.getsize(path)/1e6:.0f} MB)")
             break
-    else:
-        print("Quote opening (~1 GB) non trovate. NON BLOCCANTE per il rebuild storico:")
-        print("  il dataset si ricostruisce con le sole closing odds (2013-2025).")
-        print("  Per rigenerarle serve lo scraper tennisexplorer + proxy: vedi scraper/README.md")
+        else:
+            print("Quote opening (~1 GB) non trovate. NON BLOCCANTE per il rebuild storico:")
+            print("  il dataset si ricostruisce con le sole closing odds (2013-2025).")
+            print("  Per rigenerarle serve lo scraper tennisexplorer + proxy: vedi scraper/README.md")
     print("\nProssimo passo: python data_pipeline.py")
 
 

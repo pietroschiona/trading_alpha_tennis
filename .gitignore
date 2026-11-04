@@ -35,3 +35,24 @@ tennis_features_v36*.meta.json
 # Pipeline run logs
 pipeline_run*.log
 walkforward_run*.log
+
+# Local agent/worktree state
+.claude/
+.superpowers/
+.worktrees/
+
+# Generated model artifacts
+model_state/
+charts/
+benchmarks/
+walkforward_results.txt
+walkforward_bets.csv
+walkforward_manifest.json
+tennis_features_v36*.meta.json
+
+# Local data (re-downloadable)
+data/
+
+# Python env
+venv/
+.env

@@ -1,6 +1,6 @@
 # scraper/ — tennisexplorer odds scraper
 
-Recuperato da `D:/Betting/scraper_per_odds/prova3/` (dicembre 2025). Ha prodotto
+Scraper autonomo del repo. Ha prodotto
 `tennis_odds_data_cleaned.csv` (~1 GB, 2005–2025, Pinnacle opening coverage 88.7%).
 Fonte: tennisexplorer.com (match-detail pages), Selenium + Chrome + rotazione proxy gratuite.
 
@@ -26,5 +26,5 @@ python scraper.py               # oppure python orchestrator.py per run autonomo
 Chrome deve essere installato; il chromedriver viene scaricato via webdriver-manager.
 
 Nota: serve solo per odds fresche (aggiornamento dataset). Il rebuild storico usa
-`tennis_odds_data_cleaned.csv` già esistente su `D:/Betting/codice/modello2torri2/`
-e tennis-data.co.uk — vedi `docs/data-sources.md`.
+`data/tennis_odds_data_cleaned.csv` (non è in git) e tennis-data.co.uk — vedi
+`docs/data-sources.md`.
