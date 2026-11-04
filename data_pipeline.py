@@ -17,7 +17,10 @@ from tqdm import tqdm
 # --- FILE PATHS ---
 MATCH_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "atp_matches_TML")
 ODDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "match_odds")
-OUTPUT_FILE = "tennis_features_v36.csv"
+OUTPUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tennis_features_v36.csv")
+
+# --- REPRODUCIBILITY ---
+RNG_SEED = 42
 
 # --- YEAR RANGE ---
 START_YEAR = 2000
@@ -103,16 +106,29 @@ print("✨ All generation parameters grouped at file top for full control")
 # ==============================================================================
 
 def standardize_name_strict(name):
-    """Standardizza i nomi per il merging (es. 'Jannik Sinner' -> 'sinner j')."""
-    if not isinstance(name, str) or pd.isna(name): return ""
-    name = unidecode(name).lower().strip()
-    name = re.sub(r'[^a-z\s,]', '', name)
-    parts = re.split(r'[\s,]+', name)
-    parts = [p for p in parts if p]
-    if not parts: return ""
-    if len(parts) == 1: return parts[0]
-    if len(parts[-1]) == 1: return f"{parts[0]} {parts[-1]}"
-    return f"{parts[-1]} {parts[0][0]}"
+    """Normalize a name to 'surname initial' across TML and tennis-data formats."""
+    if not isinstance(name, str) or pd.isna(name):
+        return ""
+    raw = unidecode(name).strip()
+    had_period = "." in raw
+    clean = re.sub(r"[^a-z\s,]", " ", raw.lower())
+    parts = [p for p in re.split(r"[\s,]+", clean) if p]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    last = parts[-1]
+    is_initials = len(last) == 1 or (had_period and len(last) <= 3 and last.isalpha())
+    if is_initials:
+        # Skip the run of initials ("Del Potro J.M." -> surname "potro", initial "j")
+        idx = len(parts) - 1
+        while idx >= 0 and (len(parts[idx]) == 1 or
+                            (had_period and len(parts[idx]) <= 3 and parts[idx].isalpha())):
+            idx -= 1
+        if 0 <= idx < len(parts) - 1:
+            return f"{parts[idx]} {parts[idx + 1][0]}"
+        return f"{parts[-2]} {last[0]}"
+    return f"{last} {parts[0][0]}"
 
 def parse_date_robust(date_val):
     """Gestisce formati data misti (YYYYMMDD, Excel, ISO)."""
@@ -285,7 +301,8 @@ def load_odds():
 
             dfs.append(valid[keep_cols])
             
-        except Exception: pass
+        except Exception as e:
+            logger.warning(f"Skipping {os.path.basename(f)}: {e}")
 
     if not dfs: return pd.DataFrame()
     full_odds = pd.concat(dfs, ignore_index=True)
@@ -380,8 +397,9 @@ def calculate_financial_features(df):
     # Add Gaussian Noise
     n_rows = len(df)
     # Generate noise centered at 0 but with guaranteed volatility
-    noise_w = np.random.normal(0, 1, n_rows) * df['noise_scale'].values * df['synth_odds_W'].values
-    noise_l = np.random.normal(0, 1, n_rows) * df['noise_scale'].values * df['synth_odds_L'].values
+    rng = np.random.default_rng(RNG_SEED)
+    noise_w = rng.normal(0, 1, n_rows) * df['noise_scale'].values * df['synth_odds_W'].values
+    noise_l = rng.normal(0, 1, n_rows) * df['noise_scale'].values * df['synth_odds_L'].values
     
     df['synth_odds_W'] += noise_w
     df['synth_odds_L'] += noise_l
@@ -398,7 +416,7 @@ def calculate_financial_features(df):
     # Add a tiny epsilon if they accidentally match to force model to learn abstraction
     epsilon = 0.01
     mask_equal_w = np.isclose(df['synth_odds_W'], df['MaxW'])
-    df.loc[mask_equal_w, 'synth_odds_W'] += np.random.choice([-epsilon, epsilon], size=mask_equal_w.sum())
+    df.loc[mask_equal_w, 'synth_odds_W'] += rng.choice([-epsilon, epsilon], size=mask_equal_w.sum())
 
     return df
 def calculate_contextual_metrics(df):
@@ -432,9 +450,7 @@ def calculate_contextual_metrics(df):
         df = pd.merge(df, tourney_stats[['tourney_name', 'year', 'prev_sCPI']], on=['tourney_name', 'year'], how='left')
         
         # 4. Fill NaNs (First year of tournament or missing history)
-        # Use global average for that surface if possible, else global mean
-        global_avg = df['prev_sCPI'].mean()
-        df['sCPI'] = df['prev_sCPI'].fillna(global_avg if not pd.isna(global_avg) else SCPI_DEFAULT)
+        df['sCPI'] = df['prev_sCPI'].fillna(SCPI_DEFAULT)
         
         # Cleanup
         df = df.drop(columns=['prev_sCPI', 'total_serv_points', 'total_aces'])
@@ -611,8 +627,9 @@ def smart_merge(df_m, df_o):
     # --- IDENTITY CHECK VIA SETS WON ---
     # Distinct matches between the same two players in the same tournament window
     # (e.g. R16 and QF played days apart) share the year+player key. The number of
-    # sets won by the winner (from the raw score) is an outcome-independent
-    # fingerprint: only pairings where it agrees survive.
+    # sets won by the winner (from the raw score) is a match-identity fingerprint
+    # derived from the score; it is never used as a model feature: only pairings
+    # where it agrees survive.
     import re as _re
 
     def _sets_won_by_winner(score):
@@ -667,6 +684,8 @@ def smart_merge(df_m, df_o):
     final = final[(final['MaxW'] > MIN_VALID_ODDS) & (final['MaxL'] > MIN_VALID_ODDS)]
     
     # --- AUGMENTATION PIPELINE ---
+    # Identity fingerprints from the raw score are never model features.
+    final = final.drop(columns=['score', 'Wsets'], errors='ignore')
     final = calculate_financial_features(final) # Noise & Synth Odds
     final = calculate_contextual_metrics(final) # sCPI
     final = calculate_historical_features(final) # EWMA / Fatigue
@@ -677,7 +696,31 @@ def smart_merge(df_m, df_o):
 # MAIN EXECUTION
 # ==============================================================================
 
-if __name__ == "__main__":
+def write_dataset_metadata(csv_path, df):
+    """Write the sidecar JSON that makes the generated dataset traceable."""
+    import hashlib
+    import json
+    from datetime import datetime, timezone
+
+    h = hashlib.sha256()
+    with open(csv_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    meta = {
+        "rows": int(len(df)),
+        "date_min": str(pd.to_datetime(df["Date"]).min().date()),
+        "date_max": str(pd.to_datetime(df["Date"]).max().date()),
+        "sha256": h.hexdigest(),
+        "seed": RNG_SEED,
+        "date_tolerance_days": DATE_TOLERANCE_DAYS,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(csv_path + ".meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    return meta
+
+
+def main() -> int:
     matches = load_matches_tml()
     odds = load_odds()
     
@@ -686,13 +729,20 @@ if __name__ == "__main__":
         
         if not dataset.empty:
             dataset.to_csv(OUTPUT_FILE, index=False)
+            write_dataset_metadata(OUTPUT_FILE, dataset)
             logger.info(f"✅ DONE. Dataset saved to: {OUTPUT_FILE}")
             
             print("\n--- SCIENTIFIC FEATURE CHECK ---")
             check_cols = ['true_prob_W', 'synth_odds_W', 'sCPI', 'w_Fatigue_Load', 'w_Fragility_Index', 'w_SSI', 'w_Pythagorean']
             print(dataset[[c for c in check_cols if c in dataset.columns]].tail(5))
             print("--------------------------------\n")
+            return 0
         else:
             logger.error("Dataset empty after merge.")
     else:
         logger.error("Source data missing.")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
