@@ -1,10 +1,12 @@
 from tqdm import tqdm
 import sys
-from sklearn.metrics import roc_auc_score
-from sklearn.linear_model import LogisticRegression
-from sklearn.isotonic import IsotonicRegression
+import random
 import xgboost as xgb
 from collections import defaultdict, deque
+from datetime import datetime, timezone
+import json
+import subprocess
+from pathlib import Path
 import pickle
 import os
 import matplotlib.pyplot as plt
@@ -24,19 +26,18 @@ K = keras.backend
 # DATASET & PERCORSI
 # ------------------------
 BASE_DIR = os.getcwd()
-DATASET_FILE = os.path.join(BASE_DIR, "data", "tennis_features_v36.csv")
-# Pinnacle Opening/Closing (86.86% coverage) — cerca in più path
-SCRAPER_CSV = next(
-    (p for p in [
-        os.path.join(BASE_DIR, "data", "tennis_odds_data_cleaned.csv"),
-        "D:/Betting/codice/modello2torri2/tennis_odds_data_cleaned.csv",
-    ] if os.path.exists(p)),
-    os.path.join(BASE_DIR, "data", "tennis_odds_data_cleaned.csv")  # fallback
-)
-TML_PATH = os.path.join(BASE_DIR, "data", "atp_matches")
+DATASET_FILE = os.path.join(BASE_DIR, "tennis_features_v36.csv")
+# Pinnacle Opening/Closing scraped CSV (~1 GB, gitignored; absent in clean checkouts)
+SCRAPER_CSV = os.path.join(BASE_DIR, "data", "tennis_odds_data_cleaned.csv")
+TML_PATH = os.path.join(BASE_DIR, "data", "atp_matches_TML")
 TENNIS_DATA_PATH = os.path.join(BASE_DIR, "data", "match_odds")
 GRAPH_DIR = os.path.join(BASE_DIR, "charts")
 MODELS_DIR = os.path.join(BASE_DIR, "model_state")
+META_FILE = os.path.join(BASE_DIR, "tennis_features_v36.meta.json")
+RESULTS_FILE = os.path.join(BASE_DIR, "walkforward_results.txt")
+BETS_FILE = os.path.join(BASE_DIR, "walkforward_bets.csv")
+MANIFEST_FILE = os.path.join(BASE_DIR, "walkforward_manifest.json")
+RNG_SEED = 42
 
 # ------------------------
 # ANNI & TRAINING (2013+ for Pinnacle coverage)
@@ -72,12 +73,12 @@ PERC_STAKE = 0.01          # Stake percentuale (1% del bankroll)
 FLAT_STAKE = 10.0          # Stake fisso in €
 
 # ------------------------
-# IPERPARAMETRI RL (POLICY HEAD)
+# IPERPARAMETRI STAKE HEAD (supervised PnL-shaped head, NOT policy-gradient RL)
 # ------------------------
 RL_STAKE_MIN = 0.00        # Stake minimo (frazione bankroll)
 RL_STAKE_MAX = 0.05        # Stake massimo (frazione bankroll, 5%)
 RL_LOSS_WEIGHT_VALUE = 1.0  # Peso loss Value Head
-RL_LOSS_WEIGHT_POLICY = 0.3  # Peso loss Policy Head (stake)
+RL_LOSS_WEIGHT_POLICY = 0.3  # Peso loss Stake Head (supervised, PnL-shaped)
 RL_SHARPE_PENALTY = 0.08   # Penalità per varianza (trade-off risk/return)
 
 # ------------------------
@@ -100,7 +101,7 @@ XGB_MAX_DEPTH = 3
 XGB_ETA = 0.03
 XGB_SUBSAMPLE = 0.8
 XGB_COLSAMPLE = 0.8
-XGB_VETO_THRESHOLD = -0.02  # Se residuo < -0.05, veto su stake
+XGB_VETO_THRESHOLD = -0.02  # Se il residuo di mercato < soglia, veto su stake
 
 # ------------------------
 # FEATURE ENGINEERING
@@ -113,25 +114,15 @@ ELO_K_NORMAL = 25          # K-factor ELO per tornei normali
 # ONLINE LEARNING
 # ------------------------
 DEBIASER_WINDOW = 4000     # Finestra Odds Debiaser
-CALIBRATOR_WINDOW = 2000   # Finestra Probability Calibrator
-META_LABELER_WINDOW = 4000  # Finestra Meta-Labeler
 RETRAIN_DEEP_DAYS = 7      # Ritraining Deep Model ogni N giorni
 RETRAIN_XGB_DAYS = 14      # Ritraining XGBoost ogni N giorni
 RETRAIN_DEBIASER_DAYS = 30  # Ritraining Debiaser ogni N giorni
-
-# ------------------------
-# DRIFT DETECTION
-# ------------------------
-CUSUM_THRESHOLD = 5.0      # Soglia CUSUM per drift
-CUSUM_DRIFT_PENALTY = 0.005
-CUSUM_WARMUP = 100
 
 # ------------------------
 # PORTFOLIO MANAGEMENT
 # ------------------------
 INITIAL_BANKROLL = 1000.0
 MIN_STAKE_ABSOLUTE = 1.0   # Stake minimo assoluto in €
-MAX_STAKE_ABSOLUTE = 100.0  # Stake massimo assoluto in €
 # Stake massimo realistico per simulare limiti di liquidità
 MAX_REALISTIC_STAKE = 5000.0
 
@@ -139,7 +130,6 @@ MAX_REALISTIC_STAKE = 5000.0
 # MARKET REALISM (V35)
 # ------------------------
 EXECUTION_SLIPPAGE = 0.02  # 2% slippage
-DISTILLATION_ALPHA = 0.5   # 0.5 BCE (Outcome) + 0.5 MSE (TrueProb)
 
 # Italian Players for Home Bias (Reference)
 ITALIAN_PLAYERS = [
@@ -156,7 +146,7 @@ os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 # ==============================================================================
-# 1. UTILS: LOGGING & DRAWDOWN MANAGER
+# 1. UTILS: LOGGING
 # ==============================================================================
 
 
@@ -202,6 +192,11 @@ class HybridDataLoader:
 
     def load_scraped_pinnacle_index(self):
         """Load scraped CSV with ALL bookmakers for cascade lookup."""
+        if os.environ.get("TRADING_ALPHA_DISABLE_OPENING_ODDS") == "1":
+            Log.warn(
+                "TRADING_ALPHA_DISABLE_OPENING_ODDS=1 - skipping opening odds load")
+            return None
+
         if not os.path.exists(SCRAPER_CSV):
             Log.warn(f"Scraped CSV not found: {SCRAPER_CSV}")
             return None
@@ -442,30 +437,6 @@ class HybridDataLoader:
         return df
 
 
-class DrawdownManager:
-    def __init__(self, initial_balance=INITIAL_BANKROLL):
-        self.balance = initial_balance
-        self.equity_curve = [initial_balance]
-        self.peak = initial_balance
-        self.min_stake = MIN_STAKE_ABSOLUTE
-        self.max_stake = MAX_STAKE_ABSOLUTE
-
-    def update(self, profit):
-        self.balance += profit
-        if self.balance > self.peak:
-            self.peak = self.balance
-        self.equity_curve.append(self.balance)
-
-    def get_dd_penalty(self):
-        """Restituisce un moltiplicatore (0.0-1.0) basato sul drawdown attuale."""
-        dd = (self.peak - self.balance) / self.peak
-        if dd < 0.10:
-            return 1.0
-        if dd < 0.20:
-            return 0.75
-        if dd < 0.30:
-            return 0.50
-        return 0.25
 
 
 class OddsDebiaser:
@@ -511,192 +482,14 @@ class OddsDebiaser:
         return np.clip(self.model.predict(X), 0.01, 0.99)
 
 
-class CUSUMDriftDetector:
-    """CUSUM for drift detection."""
-
-    def __init__(self, threshold=CUSUM_THRESHOLD, drift=CUSUM_DRIFT_PENALTY, warmup=CUSUM_WARMUP):
-        self.threshold = threshold
-        self.drift = drift
-        self.warmup = warmup
-        self.g_plus = 0.0
-        self.g_minus = 0.0
-        self.n = 0
-        self.sum_error = 0.0
-        self.sq_sum_error = 0.0
-        self.detected = False
-        self.current_score = 0.0
-
-    def update(self, y_pred, y_true):
-        error = np.abs(y_true - y_pred)
-        self.n += 1
-
-        self.sum_error += error
-        self.sq_sum_error += error ** 2
-        mean_error = self.sum_error / self.n
-        std_error = np.sqrt(
-            (self.sq_sum_error / self.n) - mean_error**2) + 1e-8
-
-        if self.n < self.warmup:
-            return 0.0, False
-
-        std_norm_error = (error - mean_error) / std_error
-        self.g_plus = max(0, self.g_plus + std_norm_error - self.drift)
-        self.g_minus = max(0, self.g_minus - std_norm_error - self.drift)
-
-        self.current_score = max(self.g_plus, self.g_minus)
-
-        if self.current_score > self.threshold:
-            self.detected = True
-            self.g_plus *= 0.5
-            self.g_minus *= 0.5
-        else:
-            self.detected = False
-
-        return self.current_score, self.detected
 
 
-class ProbabilityCalibrator:
-    """Rolling Isotonic Regression wrapper."""
-
-    def __init__(self, window_size=CALIBRATOR_WINDOW):
-        self.window_size = window_size
-        self.preds_buffer = deque(maxlen=window_size)
-        self.label_buffer = deque(maxlen=window_size)
-        self.iso_reg = IsotonicRegression(
-            out_of_bounds='clip', y_min=0, y_max=1)
-        self.is_fitted = False
-
-    def update(self, raw_preds, labels):
-        for p, l in zip(raw_preds, labels):
-            self.preds_buffer.append(p)
-            self.label_buffer.append(l)
-
-    def fit(self):
-        if len(self.preds_buffer) > 100:
-            X = np.array(self.preds_buffer)
-            y = np.array(self.label_buffer)
-            X = X + np.random.uniform(0, 1e-6, size=X.shape)
-            self.iso_reg.fit(X, y)
-            self.is_fitted = True
-
-    def calibrate(self, raw_probs):
-        if not self.is_fitted:
-            return raw_probs
-        return self.iso_reg.transform(raw_probs)
 
 
-class MetaLabelerXGB:
-    """Meta-Model for bet confidence."""
-
-    def __init__(self, window_size=META_LABELER_WINDOW, retrain_every=500):
-        self.window_size = window_size
-        self.retrain_every = retrain_every
-        self.X_buffer = deque(maxlen=window_size)
-        self.y_buffer = deque(maxlen=window_size)
-        self.model = None
-        self.counter = 0
-
-        self.params = {
-            'objective': 'binary:logistic',
-            'eval_metric': 'logloss',
-            'max_depth': XGB_MAX_DEPTH,
-            'eta': 0.05,
-            'subsample': XGB_SUBSAMPLE,
-            'colsample_bytree': 1.0,
-            'verbosity': 0,
-            'n_jobs': -1
-        }
-
-    def extract_meta_features(self, prob, odds, ev, std_dev, drift_score):
-        return np.array([prob, odds, ev, std_dev, drift_score])
-
-    def update(self, meta_features, outcome_profit):
-        target = 1 if outcome_profit > 0 else 0
-        self.X_buffer.append(meta_features)
-        self.y_buffer.append(target)
-        self.counter += 1
-
-    def fit(self):
-        if len(self.X_buffer) < 200:
-            return
-
-        if self.counter >= self.retrain_every:
-            X = np.array(self.X_buffer)
-            y = np.array(self.y_buffer)
-            dtrain = xgb.DMatrix(X, label=y)
-            self.model = xgb.train(self.params, dtrain, num_boost_round=100)
-            self.counter = 0
-
-    def predict_confidence(self, meta_features_batch):
-        if self.model is None:
-            return np.ones(len(meta_features_batch)) * 0.5
-
-        dtest = xgb.DMatrix(np.array(meta_features_batch))
-        return self.model.predict(dtest)
 
 
-class KellySizingAdaptive:
-    """Adaptive Kelly Criterion."""
-
-    def __init__(self, base_fraction=KELLY_FRACTION, max_cap=RL_STAKE_MAX):
-        self.base_fraction = base_fraction
-        self.max_cap = max_cap
-
-    def get_stake(self, bankroll, prob, odds, meta_conf, drift_score):
-        if prob <= 0 or odds <= 1:
-            return 0.0
-
-        b = odds - 1
-        q = 1 - prob
-        f_star = (b * prob - q) / b
-
-        regime_multiplier = 1.0 / (1.0 + 0.5 * max(0, drift_score - 2.0))
-
-        meta_multiplier = 1.0
-        if meta_conf < 0.5:
-            meta_multiplier = 0.0
-        elif meta_conf < 0.6:
-            meta_multiplier = 0.5
-        elif meta_conf > 0.75:
-            meta_multiplier = 1.2
-
-        final_fraction = f_star * self.base_fraction * \
-            regime_multiplier * meta_multiplier
-        final_fraction = min(final_fraction, self.max_cap)
-        final_fraction = max(0.0, final_fraction)
-
-        return final_fraction * bankroll
 
 
-class DriftMonitor:
-    """Monitora la 'salute' del modello in tempo reale."""
-
-    def __init__(self, window=100):
-        self.window = window
-        self.outcomes = deque(maxlen=window)
-        self.roi_history = []
-
-    def log_bet(self, stake, profit):
-        self.outcomes.append((stake, profit))
-
-    def get_regime_factor(self):
-        if len(self.outcomes) < 20:
-            return 1.0
-
-        total_invested = sum(x[0] for x in self.outcomes)
-        total_profit = sum(x[1] for x in self.outcomes)
-
-        if total_invested == 0:
-            return 1.0
-        recent_roi = total_profit / total_invested
-
-        if recent_roi > 0.05:
-            return 1.2
-        if recent_roi > -0.05:
-            return 1.0
-        if recent_roi > -0.15:
-            return 0.5
-        return 0.2
 
 # ==============================================================================
 # 2. FEATURE ENGINEERING (ROBUST)
@@ -764,8 +557,20 @@ def compute_ewma_features(df, stat_cols, group_col='name', com=EWMA_COM):
             df[f'ewma_{col}'] = (
                 df.groupby(group_col)[col]
                 .transform(lambda x: x.shift(1).ewm(com=com, adjust=False).mean())
-            ).bfill().fillna(0)
+            # No bfill: the first observation has no history and must not see the future.
+            ).fillna(0.0)
     return df
+
+def _swap_market_context(xmkt, cols_mkt):
+    """Mirror the market features for the A/B-swapped training sample."""
+    x = np.array(xmkt, dtype="float32", copy=True)
+    if "fair_prob_A" in cols_mkt:
+        i = cols_mkt.index("fair_prob_A")
+        x[i] = 1.0 - x[i]
+    if "implied_A" in cols_mkt and "implied_B" in cols_mkt:
+        ia, ib = cols_mkt.index("implied_A"), cols_mkt.index("implied_B")
+        x[ia], x[ib] = x[ib], x[ia]
+    return x
 
 
 def calculate_fair_probability(odds_a, odds_b):
@@ -780,13 +585,15 @@ def enrich_features_residual(raw_df, scaler_fit=False, scaler=None):
     Log.info("PREP", "Feature Engineering Pipeline (V36 - LEAK FIX APPLIED)...")
     df = raw_df.copy()
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    df = df.dropna(subset=['Date']).sort_values('Date')
+    df = df.dropna(subset=['Date']).sort_values(
+        ['Date', 'match_num'] if 'match_num' in df.columns else ['Date'])
 
     df = calculate_surface_elo_optimized(df)
 
-    # --- CALCOLO TARGET TEACHER (Distillation) ---
-    # Usiamo le Closing Odds (MaxW/MaxL) SOLO come Target (Label) per insegnare la probabilità reale.
-    # NON DEVONO MAI ESSERE USATE COME INPUT.
+    # --- CALCOLO PROBABILITÀ CLOSING (target del solo debiaser) ---
+    # Usiamo le Closing Odds (MaxW/MaxL) come riferimento di mercato per calibrare
+    # la probabilità mattina→sera. NON DEVONO MAI ESSERE USATE COME INPUT né come
+    # target di training della rete.
     closing_margin = (1.0 / df['MaxW']) + (1.0 / df['MaxL'])
     df['closing_true_prob_W'] = (1.0 / df['MaxW']) / closing_margin
     df['closing_true_prob_L'] = (1.0 / df['MaxL']) / closing_margin
@@ -796,8 +603,7 @@ def enrich_features_residual(raw_df, scaler_fit=False, scaler=None):
     # - Se esistono Opening Odds (Pin_Open_W/L) → usa quelle alla MATTINA
     # - Se NON esistono Opening → usa Closing (MaxW/MaxL) anche per MATTINA
     #
-    # In entrambi i casi, le Closing (MaxW/MaxL) sono usate SOLO come target
-    # per il training nella fase "SERA" (Teacher Distillation).
+    # In entrambi i casi, le Closing (MaxW/MaxL) alimentano solo il debiaser.
 
     # Per-match logic: crea colonne morning_odds_W/L
     has_opening = (
@@ -835,7 +641,7 @@ def enrich_features_residual(raw_df, scaler_fit=False, scaler=None):
     df_w['target'] = 1
     df_w['odds_A'] = df_w[col_odds_W]  # Quota Apertura (Input/Betting)
     df_w['odds_B'] = df_w[col_odds_L]
-    df_w['closing_true_prob'] = df_w['closing_true_prob_W']  # Teacher Target
+    df_w['closing_true_prob'] = df_w['closing_true_prob_W']  # Debiaser target
 
     # Stack Rows - LOSER perspective
     df_l = df.copy()
@@ -844,7 +650,7 @@ def enrich_features_residual(raw_df, scaler_fit=False, scaler=None):
     df_l['target'] = 0
     df_l['odds_A'] = df_l[col_odds_L]  # Quota Apertura (Input/Betting)
     df_l['odds_B'] = df_l[col_odds_W]
-    df_l['closing_true_prob'] = df_l['closing_true_prob_L']  # Teacher Target
+    df_l['closing_true_prob'] = df_l['closing_true_prob_L']  # Debiaser target
 
     # Map Derived features (SSI, Fragility, Fatigue)
     sota_features = ['SSI', 'Fragility_Index',
@@ -908,7 +714,8 @@ def enrich_features_residual(raw_df, scaler_fit=False, scaler=None):
     df_full = compute_ewma_features(df_full, stats_ewma, 'name', EWMA_COM)
 
     # H2H Logic
-    df_full = df_full.sort_values('Date')
+    df_full = df_full.sort_values(
+        ['Date', 'match_num'] if 'match_num' in df_full.columns else ['Date'])
     df_full['h2h_wins'] = df_full.groupby(['name', 'opp_name', 'surface'])[
         'target'].transform(lambda x: x.shift(1).cumsum()).fillna(0)
     df_full['h2h_games'] = df_full.groupby(['name', 'opp_name', 'surface'])[
@@ -983,37 +790,32 @@ def enrich_features_residual(raw_df, scaler_fit=False, scaler=None):
 # 3. MODELS: HYDRA DUAL-HEAD + XGBOOST WRAPPER
 # ==============================================================================
 
-def create_distillation_loss(alpha=DISTILLATION_ALPHA):
+def create_outcome_loss():
     """
-    LEAK-FREE Loss for Blind Analyst Head.
+    LEAK-FREE Loss for the Blind Analyst Head.
 
     PARADIGMA MATTINA/SERA:
     - MATTINA: Il modello predice probabilità basandosi su opening odds
     - SERA: Il modello impara dall'outcome reale (0/1)
 
-    La closing_true_prob NON viene usata come training target!
-    Viene usata solo per calibrazione post-predizione (XGBoost, Debiaser).
+    La closing_prob di mercato NON e' un target di training: viene usata solo
+    dal debiaser per calibrare la probabilità mattina→sera.
     """
     bce = tf.keras.losses.BinaryCrossentropy()
 
-    def calibrated_loss(y_true_combined, y_pred):
-        # y_true_combined shape: (batch, 2) -> [outcome (0/1), closing_true_prob]
-        # MA usiamo SOLO outcome per training!
-        outcome = y_true_combined[:, 0]
-        # closing_true_prob = y_true_combined[:, 1]  # NON USATO per loss!
+    def outcome_loss(y_true, y_pred):
+        # Target 1-D: solo l'outcome reale (0/1).
+        y_true = tf.reshape(y_true, [-1])
+        y_pred = tf.reshape(y_pred, [-1])
+        return bce(y_true, y_pred)
 
-        # Loss basata SOLO su outcome reale
-        loss = bce(outcome, y_pred)
-
-        return loss
-
-    return calibrated_loss
+    return outcome_loss
 
 
 def create_pnl_loss(rl_weight=RL_LOSS_WEIGHT_POLICY, sharpe_penalty=RL_SHARPE_PENALTY):
     """
-    Custom Loss for Policy Head (Stake Optimization).
-    Minimizes negative PnL with Sharpe penalty for risk control.
+    Supervised, PnL-shaped loss for the Stake Head (NOT policy-gradient RL).
+    Minimizes negative PnL with a variance penalty for risk control.
     """
     def pnl_loss(y_true, y_pred):
         # y_true shape: (batch, 2) -> [outcome (0/1), odds]
@@ -1093,7 +895,7 @@ def build_hydra_model_blind_analyst(len_A, len_B, len_PHY, len_MKT):
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=LR_VALUE),
         loss={
-            'win_prob': create_distillation_loss(),  # Custom Distillation
+            'win_prob': create_outcome_loss(),  # Outcome-only loss (no market teacher)
             'stake_fraction': create_pnl_loss()
         },
         loss_weights={
@@ -1107,7 +909,11 @@ def build_hydra_model_blind_analyst(len_A, len_B, len_PHY, len_MKT):
 
 class EnsemblePredictor:
     """
-    Gestisce il Deep Model (Hydra) e l'XGBoost Censor.
+    Gestisce il Deep Model (Hydra) e l'XGBoost market-residual censor.
+
+    XGBoost non modella i residui della rete: impara il residuo di MERCATO
+    (outcome - probabilità implicita mattina) e veta lo stake quando il mercato
+    segnala che il modello sta sovrastimando.
     """
 
     def __init__(self, deep_model):
@@ -1141,22 +947,22 @@ class EnsemblePredictor:
         p_prob = preds[0].flatten()
         p_stake = preds[1].flatten()
 
-        # XGB Residual Prediction
+        # XGB market-residual prediction (target: outcome - morning implied prob)
         # XGB sees everything flattened
-        xgb_residual = np.zeros_like(p_prob)
+        xgb_market_residual = np.zeros_like(p_prob)
         if self.xgb_model:
             X_flat = np.hstack([XA, XB, X_PHY, X_MKT])
             dtest = xgb.DMatrix(X_flat)
-            xgb_residual = self.xgb_model.predict(dtest)
+            xgb_market_residual = self.xgb_model.predict(dtest)
 
-        return p_prob, p_stake, xgb_residual
+        return p_prob, p_stake, xgb_market_residual
 
-    def apply_xgb_veto(self, stake_pred, xgb_residual):
+    def apply_xgb_veto(self, stake_pred, xgb_market_residual):
         """
-        XGBoost Censor: If XGB predicts negative residual (model overconfident),
-        veto the stake.
+        XGBoost market-residual censor: if the market residual is negative
+        (the model is overconfident relative to the market), veto the stake.
         """
-        veto_mask = xgb_residual < XGB_VETO_THRESHOLD
+        veto_mask = xgb_market_residual < XGB_VETO_THRESHOLD
         stake_censored = np.where(veto_mask, 0.0, stake_pred)
         return stake_censored
 
@@ -1175,14 +981,14 @@ class EnsemblePredictor:
 
 def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, deep_model):
     """
-    Walk-Forward Loop V36 (Blind Analyst + Distillation).
+    Walk-Forward Loop V36 (Blind Analyst + supervised Stake Head).
     """
     # Buffers
     buf_A, buf_B, buf_PHY, buf_MKT = (
         deque(maxlen=BUFFER_SIZE) for _ in range(4))
-    # entries: [outcome, closing_true_prob] for Distillation
+    # entries: outcome only (0/1) - the market prob is NOT a training target
     buf_Y_prob = deque(maxlen=BUFFER_SIZE)
-    buf_Y_stake = deque(maxlen=BUFFER_SIZE)  # For policy head: [outcome, odds]
+    buf_Y_stake = deque(maxlen=BUFFER_SIZE)  # Stake Head: [outcome, odds]
     xgb_buffer_X, xgb_buffer_Y = [], []
 
     # Components
@@ -1194,14 +1000,14 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
     bankroll_perc = INITIAL_BANKROLL
     bankroll_kelly = INITIAL_BANKROLL
     bankroll_sota = INITIAL_BANKROLL
-    bankroll_rl = INITIAL_BANKROLL
+    bankroll_head = INITIAL_BANKROLL
 
     # Equity curves
     equity_flat = [INITIAL_BANKROLL]
     equity_perc = [INITIAL_BANKROLL]
     equity_kelly = [INITIAL_BANKROLL]
     equity_sota = [INITIAL_BANKROLL]
-    equity_rl = [INITIAL_BANKROLL]
+    equity_head = [INITIAL_BANKROLL]
 
     bets_list = []
     recorded_dates = []
@@ -1224,9 +1030,10 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
     # Targets
     Y_outcome_full = df[target_col].values.astype('float32')
     Y_true_prob_full = df['closing_true_prob'].values.astype(
-        'float32')  # Teacher Target
+        'float32')  # Debiaser target only (never a training target)
 
     Odds_full = df['odds_A'].values.astype('float32')
+    Odds_B_full = df['odds_B'].values.astype('float32')
 
     # Metadata
     Dates_full = df['Date'].values
@@ -1254,7 +1061,7 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
         XPHY = XPHY_full[start_idx:end_idx]
         XMKT = XMKT_full[start_idx:end_idx]
         Y_true = Y_outcome_full[start_idx:end_idx]
-        # Slice del Teacher Target per il giorno corrente
+        # Slice della probabilità closing (solo per il debiaser)
         true_prob_day = Y_true_prob_full[start_idx:end_idx]
 
         odds_day = Odds_full[start_idx:end_idx]
@@ -1265,12 +1072,12 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
 
             # Batch Prediction
             # Head 1 vede solo XA, XB, XPHY. Head 2 vede tutto.
-            preds_prob, preds_stake_raw, xgb_residual = ensemble.predict(
+            preds_prob, preds_stake_raw, xgb_market_residual = ensemble.predict(
                 XA, XB, XPHY, XMKT)
 
-            # Apply XGBoost Veto
-            preds_stake_rl = ensemble.apply_xgb_veto(
-                preds_stake_raw, xgb_residual)
+            # Apply XGBoost market-residual veto
+            preds_stake_head = ensemble.apply_xgb_veto(
+                preds_stake_raw, xgb_market_residual)
 
             # Debiased Market (per le strategie di confronto)
             # Fallback se colonna non trovata
@@ -1295,8 +1102,8 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
 
                 # Filters
                 signal_deep = (my_prob - mkt_prob) > MIN_EDGE
-                # XGB conferma che non stiamo sovrastimando
-                signal_xgb = (xgb_residual[i] > 0.01)
+                # XGB market-residual: positive means the model under-prices
+                signal_xgb = (xgb_market_residual[i] > 0.01)
 
                 if signal_deep and signal_xgb and ev > MIN_EDGE:
                     won = (Y_true[i] == 1)
@@ -1339,22 +1146,22 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
                         (odds_executed - 1) if won else -stake_sota
                     bankroll_sota += pnl_sota
 
-                    # RL AGENT (Policy Head + Veto, capped)
-                    stake_fraction_rl = preds_stake_rl[i]
-                    stake_rl = bankroll_rl * stake_fraction_rl
-                    stake_rl = min(
-                        max(MIN_STAKE_ABSOLUTE, stake_rl), effective_cap)
-                    pnl_rl = stake_rl * \
-                        (odds_executed - 1) if won else -stake_rl
-                    bankroll_rl += pnl_rl
+                    # STAKE HEAD (supervised PnL-shaped head + veto, capped)
+                    stake_fraction_head = preds_stake_head[i]
+                    stake_head = bankroll_head * stake_fraction_head
+                    stake_head = min(
+                        max(MIN_STAKE_ABSOLUTE, stake_head), effective_cap)
+                    pnl_head = stake_head * \
+                        (odds_executed - 1) if won else -stake_head
+                    bankroll_head += pnl_head
 
                     bets_list.append({
                         'date': d,
                         'match': names_day[i],
                         'odds': odds,
                         'prob': my_prob,
-                        'stake_rl': stake_rl,
-                        'pnl_rl': pnl_rl,
+                        'stake_head': stake_head,
+                        'pnl_head': pnl_head,
                         'won': won
                     })
 
@@ -1362,32 +1169,33 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
             equity_perc.append(bankroll_perc)
             equity_kelly.append(bankroll_kelly)
             equity_sota.append(bankroll_sota)
-            equity_rl.append(bankroll_rl)
+            equity_head.append(bankroll_head)
             recorded_dates.append(d)
 
         # --- UPDATE BUFFERS (Evening) ---
         for k in range(len(XA)):
-            # Value Head Targets: [Outcome, Teacher_Prob]
+            # Value Head target: outcome only (0/1), 1-D
             # Direct
             buf_A.append(XA[k])
             buf_B.append(XB[k])
             buf_PHY.append(XPHY[k])
             buf_MKT.append(XMKT[k])
-            buf_Y_prob.append([Y_true[k], true_prob_day[k]])
+            buf_Y_prob.append(Y_true[k])
 
-            # Swapped (Symmetry)
+            # Swapped (Symmetry): the market context must be mirrored too
+            xmkt_swap = _swap_market_context(XMKT[k], cols_MKT)
             buf_A.append(XB[k])
             buf_B.append(XA[k])
             buf_PHY.append(XPHY[k])
-            buf_MKT.append(XMKT[k])
-            # Se A vince (1), B perde (0). Se A ha prob Teacher P, B ha 1-P.
-            buf_Y_prob.append([1.0 - Y_true[k], 1.0 - true_prob_day[k]])
+            buf_MKT.append(xmkt_swap)
+            # Se A vince (1), B perde (0).
+            buf_Y_prob.append(1.0 - Y_true[k])
 
-            # Policy Head Targets: [Outcome, Odds]
+            # Stake Head targets: [Outcome, Odds] - swapped uses odds_B
             odds_k = odds_day[k]
+            odds_b_k = Odds_B_full[start_idx + k]
             buf_Y_stake.append([Y_true[k], odds_k])
-            # Loss logic handles outcome
-            buf_Y_stake.append([1.0 - Y_true[k], odds_k])
+            buf_Y_stake.append([1.0 - Y_true[k], odds_b_k])
 
             # Debiaser Update - PARADIGMA SERA
             # Calibra le predizioni del modello rispetto alla closing_true_prob
@@ -1399,17 +1207,17 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
             debiaser.update([mkt_val], [closing_prob_k])
             debiaser.update([1.0 - mkt_val], [1.0 - closing_prob_k])
 
-            # XGBoost Buffer (Residual) - FASE SERA (LEAK-FREE)
-            # XGB impara dove la probabilità MATTINA (fair_prob_A) sbaglia rispetto all'OUTCOME REALE
+            # XGBoost market-residual buffer - FASE SERA (LEAK-FREE)
+            # Impara il residuo di MERCATO: outcome reale - probabilità mattina.
             # NON usa closing_prob perché contiene info futura!
             flat = np.concatenate([XA[k], XB[k], XPHY[k], XMKT[k]])
             xgb_buffer_X.append(flat)
             # Residuo: Outcome Reale (sera) - Prob Mattina (mattina)
-            # Positivo = modello sottostima, Negativo = modello sovrastima
+            # Positivo = il mercato sottostima, Negativo = il mercato sovrastima
             xgb_buffer_Y.append(Y_true[k] - mkt_val)
 
-            # Swapped XGB
-            flat_swap = np.concatenate([XB[k], XA[k], XPHY[k], XMKT[k]])
+            # Swapped market-residual sample
+            flat_swap = np.concatenate([XB[k], XA[k], XPHY[k], xmkt_swap])
             xgb_buffer_X.append(flat_swap)
             xgb_buffer_Y.append((1.0 - Y_true[k]) - (1.0 - mkt_val))
 
@@ -1453,7 +1261,7 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
         'Perc': equity_perc,
         'Kelly': equity_kelly,
         'Reference': equity_sota,
-        'RL_Agent': equity_rl
+        'StakeHead': equity_head
     }
 
     return equity_dict, bets_list, recorded_dates
@@ -1474,7 +1282,7 @@ def generate_charts(dates, hist_dict, run_id, total_bets, win_rate, avg_odds):
         'Perc': 'yellow',
         'Kelly': 'magenta',
         'Reference': '#00ff00',
-        'RL_Agent': '#FFA500'  # Orange/Gold
+        'StakeHead': '#FFA500'  # Orange/Gold
     }
 
     formulas_text = (
@@ -1482,17 +1290,15 @@ def generate_charts(dates, hist_dict, run_id, total_bets, win_rate, avg_odds):
         "────────────────────────\n"
         r"$\bf{Flat}$: $S_t = 10€$" "\n\n"
         r"$\bf{Perc}$: $S_t = B_{t-1} \times 1.0\%$" "\n\n"
-        r"$\bf{Kelly}$: $S_t = B_{t-1} \times f^* \times 5\%_{cap}$" "\n\n"
-        r"$\bf{Reference}$: $S_t = S_{Kelly} \times \phi(Drift)$" "\n\n"
-        r"$\bf{RL\_Agent}$: $S_t = B_{t-1} \times \pi(s) \times \mathbb{1}_{XGB}$" "\n\n"
+        r"$\bf{Kelly}$: $S_t = B_{t-1} \times f^* \times 10\%_{cap}$" "\n\n"
+        r"$\bf{Reference}$: $S_t = S_{Kelly} \times 1.5\%$" "\n\n"
+        r"$\bf{StakeHead}$: $S_t = B_{t-1} \times p(s)$" "\n\n"
         "────────────────────────\n\n"
         "SYMBOL LEGEND:\n"
         r"$S_t$: Stake at time $t$" "\n"
         r"$B_{t-1}$: Bankroll at $t-1$" "\n"
         r"$f^*$: Kelly Fraction" "\n"
-        r"$\phi$: Regime Penalty" "\n"
-        r"$\pi(s)$: RL Policy Output" "\n"
-        r"$\mathbb{1}_{XGB}$: XGBoost Veto"
+        r"$p(s)$: Supervised stake head output, $p \in [0, 5\%]$, XGB veto"
     )
 
     def create_plot(plot_dates, plot_hist, suffix, title_mod="", force_linear=False):
@@ -1669,25 +1475,95 @@ def generate_charts(dates, hist_dict, run_id, total_bets, win_rate, avg_odds):
                         title_mod="[2025 FOCUS] ")
 
 # ==============================================================================
-# 6. MAIN
+# 6. RESULTS PROVENANCE
+# ==============================================================================
+
+def write_bets_csv(path, bets):
+    pd.DataFrame(bets).to_csv(path, index=False)
+
+
+def write_results(path, equity_dict, bets, dataset_meta, opening_coverage, config):
+    total_bets = len(bets)
+    wins = sum(1 for b in bets if b["won"])
+    win_rate = (wins / total_bets * 100) if total_bets else 0.0
+    avg_odds = float(np.mean([b["odds"] for b in bets])) if bets else 0.0
+    lines = [
+        "TRADING ALPHA - Walk-Forward Results",
+        f"Generated: {datetime.now(timezone.utc).isoformat()}",
+        f"Code commit: {config.get('code_commit', 'unknown')}",
+        f"Dataset rows: {dataset_meta.get('rows', 0)}",
+        f"Dataset sha256: {dataset_meta.get('sha256', 'unknown')}",
+        f"Dataset date range: {dataset_meta.get('date_min', '?')}..{dataset_meta.get('date_max', '?')}",
+        f"Opening odds coverage: {opening_coverage:.1f}%",
+        f"Period: {config.get('betting_start_year', '?')}-{config.get('end_year', '?')}",
+        f"Bets: {total_bets}",
+        f"Wins: {wins}/{total_bets} ({win_rate:.1f}%)",
+        f"Avg odds: {avg_odds:.2f}",
+    ]
+    for name in ["Flat", "Perc", "Kelly", "Reference", "StakeHead"]:
+        final = equity_dict[name][-1]
+        lines.append(f"{name}: EUR {final:.0f} (P: {final - INITIAL_BANKROLL:+.0f})")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_manifest(path, results, dataset_meta, config):
+    payload = {
+        "config": config,
+        "dataset": dataset_meta,
+        "opening_odds_coverage": results.get("opening_odds_coverage"),
+        "results": results,
+    }
+    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
+
+def _code_commit():
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=BASE_DIR,
+            stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:
+        return "unknown"
+
+
+# ==============================================================================
+# 7. MAIN
 # ==============================================================================
 
 
 def main():
     os.makedirs(MODELS_DIR, exist_ok=True)
     os.makedirs(GRAPH_DIR, exist_ok=True)
-    Log.banner("TENNIS HYDRA V37: BLIND ANALYST + SOFT BOOKIE")
+    Log.banner("TENNIS HYDRA V37: BLIND ANALYST + SUPERVISED STAKE HEAD")
+
+    random.seed(RNG_SEED)
+    np.random.seed(RNG_SEED)
+    tf.random.set_seed(RNG_SEED)
 
     if not os.path.exists(DATASET_FILE):
         Log.err(f"Dataset missing: {DATASET_FILE}")
-        return
+        return 1
 
     try:
         raw_df = pd.read_csv(DATASET_FILE, low_memory=False)
 
-        # STEP 1: Enrich with Opening odds from scraped CSV
-        loader = HybridDataLoader()
-        raw_df = loader.enrich_with_opening_odds(raw_df)
+        # STEP 1: Enrich with Opening odds from scraped CSV (~1 GB, optional)
+        if os.environ.get("TRADING_ALPHA_DISABLE_OPENING_ODDS") == "1":
+            Log.warn(
+                "TRADING_ALPHA_DISABLE_OPENING_ODDS=1 - using closing odds only")
+            opening_coverage = 0.0
+        else:
+            loader = HybridDataLoader()
+            raw_df = loader.enrich_with_opening_odds(raw_df)
+            opening_coverage = (
+                float(raw_df["has_pin_open"].mean() * 100)
+                if "has_pin_open" in raw_df.columns else 0.0)
+
+        # Dataset provenance sidecar (written by data_pipeline.py)
+        if os.path.exists(META_FILE):
+            with open(META_FILE, encoding="utf-8") as f:
+                dataset_meta = json.load(f)
+        else:
+            dataset_meta = {"rows": len(raw_df), "sha256": "unknown"}
 
         # STEP 2: Feature Engineering (now uses Pin_Open_W/L if available)
         df_data, cA, cB, cPHY, cMKT, scaler = enrich_features_residual(
@@ -1701,7 +1577,16 @@ def main():
             pickle.dump({'cols_A': cA, 'cols_B': cB,
                         'cols_PHY': cPHY, 'cols_MKT': cMKT}, f)
 
-        best_profit_rl = -99999
+        config = {
+            "code_commit": _code_commit(),
+            "betting_start_year": BETTING_START_YEAR,
+            "end_year": int(df_data['Date'].dt.year.max()),
+            "seed": RNG_SEED,
+            "num_loops": NUM_LOOPS,
+        }
+
+        best_profit_head = -99999
+        last_run = None
 
         for i in range(1, NUM_LOOPS + 1):
             K.clear_session()
@@ -1722,26 +1607,46 @@ def main():
                 win_rate = 0.0
                 avg_odds = 0.0
 
-            final_rl = equity_dict['RL_Agent'][-1]
-            final_profit_rl = final_rl - INITIAL_BANKROLL
+            final_head = equity_dict['StakeHead'][-1]
+            final_profit_head = final_head - INITIAL_BANKROLL
 
             Log.info(
-                f"RES {i}", f"RL_Agent: €{final_rl:.0f} | Reference: €{equity_dict['Reference'][-1]:.0f} | Bets: {total_bets} | WR: {win_rate:.1f}%")
+                f"RES {i}", f"StakeHead: EUR {final_head:.0f} | Reference: EUR {equity_dict['Reference'][-1]:.0f} | Bets: {total_bets} | WR: {win_rate:.1f}%")
 
             # Generate Charts
             generate_charts(dates, equity_dict, i,
                             total_bets, win_rate, avg_odds)
 
-            if final_profit_rl > best_profit_rl:
-                best_profit_rl = final_profit_rl
+            last_run = (equity_dict, bets_list, dates,
+                        total_bets, wins, win_rate, avg_odds)
+
+            if final_profit_head > best_profit_head:
+                best_profit_head = final_profit_head
                 model.save(os.path.join(
                     MODELS_DIR, "best_hydra_rl_model.keras"))
+
+        equity_dict, bets_list, dates, total_bets, wins, win_rate, avg_odds = last_run
+
+        write_results(Path(RESULTS_FILE), equity_dict, bets_list,
+                      dataset_meta, opening_coverage, config)
+        write_bets_csv(BETS_FILE, bets_list)
+        write_manifest(Path(MANIFEST_FILE), {
+            "opening_odds_coverage": opening_coverage,
+            "bets": total_bets,
+            "wins": wins,
+            "win_rate": win_rate,
+            "avg_odds": avg_odds,
+            "final_equity": {k: v[-1] for k, v in equity_dict.items()},
+        }, dataset_meta, config)
+        Log.ok(f"Results written: {RESULTS_FILE}, {BETS_FILE}, {MANIFEST_FILE}")
+        return 0
 
     except Exception as e:
         Log.err(f"Fatal Error: {e}")
         import traceback
         traceback.print_exc()
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
