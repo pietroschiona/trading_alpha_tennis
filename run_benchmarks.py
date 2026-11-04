@@ -22,10 +22,12 @@ is published).
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -156,6 +158,27 @@ def load_bets(path):
     except pd.errors.EmptyDataError:
         return None
     return bets
+
+
+def sha256_file(path, chunk_size: int = 1 << 20) -> str:
+    """Stream the dataset hash: the guard must hash the file it is about to measure."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def benchmark_commit() -> str:
+    """Commit of the code running the benchmarks (distinct from the model run commit)."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(BENCH_DIR), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return "unknown"
+    return out.stdout.strip() or "unknown"
 
 
 # --------------------------------------------------------------------------
@@ -363,9 +386,15 @@ def _integrity_passed(tests: dict) -> bool:
 
 
 def _edge_verdict(ret) -> str:
+    """YES needs a positive ROI and a 95% CI lower bound above zero.
+
+    The one-sided p-value certifies the 90% interval, so it is not enough on its
+    own: at p = 0.04 the 2.5th percentile can still be negative.
+    """
     if not ret or not ret.get("available"):
         return "NOT MEASURED"
-    if ret["p_value"] is not None and ret["p_value"] <= 0.05 and ret["roi"] > 0:
+    lo = (ret.get("ci_95") or [None, None])[0]
+    if lo is not None and lo > 0 and ret["roi"] > 0:
         return "YES"
     return "NO"
 
@@ -391,7 +420,8 @@ def format_report(tests: dict, results: dict) -> str:
         "",
         "| Field | Value |",
         "|---|---|",
-        f"| Code commit | `{results.get('code_commit', 'unknown')}` |",
+        f"| Model run commit (produced these bets) | `{results.get('code_commit', 'unknown')}` |",
+        f"| Benchmark commit | `{prov.get('benchmark_commit', 'unknown')}` |",
         f"| Dataset rows | {results['dataset_rows']} |",
         f"| Dataset sha256 | `{results['dataset_sha256']}` |",
         f"| Meta rows | {prov.get('meta_rows')} |",
@@ -401,8 +431,9 @@ def format_report(tests: dict, results: dict) -> str:
         f"| Bets | {results['total_bets']} |",
         f"| Wins | {results['wins']}/{results['total_bets']} ({results['win_rate']*100:.1f}%) |",
     ]
-    if prov.get("reasons"):
-        lines.append(f"| Provenance problems | {'; '.join(prov['reasons'])} |")
+    problems = list(prov.get("reasons") or []) + list(prov.get("warnings") or [])
+    if problems:
+        lines.append(f"| Provenance problems | {'; '.join(problems)} |")
 
     lines.extend(["", "## Return test (primary evidence)", ""])
     if ret and ret.get("available"):
@@ -585,6 +616,7 @@ def main() -> int:
             meta = {}
 
     reasons = []
+    warnings = []
     if not meta:
         reasons.append(f"{META_PATH.name} missing or unreadable")
     else:
@@ -597,16 +629,27 @@ def main() -> int:
                 f"dataset row count mismatch: results {results['dataset_rows']} "
                 f"vs meta {meta.get('rows')}")
 
+    if not DATASET_PATH.exists():
+        reasons.append(f"{DATASET_PATH.name} missing")
+    else:
+        actual_sha = sha256_file(DATASET_PATH)
+        if str(meta.get("sha256")) != actual_sha:
+            reasons.append(
+                f"dataset file sha256 mismatch: meta {meta.get('sha256')} "
+                f"vs file {actual_sha}")
+
+    if str(results.get("code_commit", "")).endswith("+dirty"):
+        warnings.append(
+            "results produced by uncommitted code - not reproducible from a commit")
+
     provenance = {
         "passed": not reasons,
         "reasons": reasons,
+        "warnings": warnings,
         "meta_rows": meta.get("rows"),
         "meta_sha256": meta.get("sha256"),
+        "benchmark_commit": benchmark_commit(),
     }
-    if not DATASET_PATH.exists():
-        provenance["passed"] = False
-        reasons.append(f"{DATASET_PATH.name} missing")
-        provenance["reasons"] = reasons
 
     if not provenance["passed"]:
         print("\nVOID - provenance not established:")
@@ -618,6 +661,8 @@ def main() -> int:
 
     print(f"\nProvenance verified: {results['dataset_rows']} rows, "
           f"sha256 {results['dataset_sha256'][:12]}..., commit {results['code_commit']}")
+    for w in warnings:
+        print(f"  warning: {w}")
     print(f"Recorded: {results['total_bets']} bets, {results['win_rate']*100:.1f}% WR, "
           f"opening odds coverage {results['opening_odds_coverage']}%\n")
 
@@ -665,10 +710,15 @@ def main() -> int:
         print("Skipping Test 5 (--quick mode)")
     elif SCRAPER_PATH.exists():
         print("Running Test 5 (opening vs closing drift, descriptive)...")
-        tests["market_drift"] = run_market_drift(DATASET_PATH, SCRAPER_PATH)
-        d = tests["market_drift"]
-        print(f"  opening odds coverage: {d['coverage_pct']}% "
-              f"({d['with_opening_odds']}/{d['total_betting_matches']})")
+        try:
+            tests["market_drift"] = run_market_drift(DATASET_PATH, SCRAPER_PATH)
+        except Exception as exc:  # Test 5 is descriptive and must never kill the report
+            tests["market_drift"] = None
+            print(f"  Skipping Test 5 - {type(exc).__name__}: {exc}")
+        else:
+            d = tests["market_drift"]
+            print(f"  opening odds coverage: {d['coverage_pct']}% "
+                  f"({d['with_opening_odds']}/{d['total_betting_matches']})")
     else:
         tests["market_drift"] = None
         print(f"Skipping Test 5 - {SCRAPER_PATH.name} not available")
