@@ -140,7 +140,7 @@ def parse_date_robust(date_val):
         if str_val.replace('.', '', 1).isdigit() and 30000 < float(str_val) < 60000:
              return pd.to_datetime(float(str_val), unit='D', origin='1899-12-30')
         return pd.to_datetime(date_val, dayfirst=True, errors='coerce')
-    except:
+    except Exception:
         return pd.NaT
 
 def sanitize_numeric_columns(df):
@@ -685,7 +685,7 @@ def smart_merge(df_m, df_o):
     
     # --- AUGMENTATION PIPELINE ---
     # Identity fingerprints from the raw score are never model features.
-    final = final.drop(columns=['score', 'Wsets'], errors='ignore')
+    final = final.drop(columns=['score', 'Wsets', '_w_sets', '_odds_w_sets'], errors='ignore')
     final = calculate_financial_features(final) # Noise & Synth Odds
     final = calculate_contextual_metrics(final) # sCPI
     final = calculate_historical_features(final) # EWMA / Fatigue
@@ -715,7 +715,7 @@ def write_dataset_metadata(csv_path, df):
         "date_tolerance_days": DATE_TOLERANCE_DAYS,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-    with open(csv_path + ".meta.json", "w", encoding="utf-8") as f:
+    with open(os.path.splitext(csv_path)[0] + ".meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
     return meta
 
