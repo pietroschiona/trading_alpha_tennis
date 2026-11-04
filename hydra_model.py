@@ -572,6 +572,27 @@ def _swap_market_context(xmkt, cols_mkt):
         x[ia], x[ib] = x[ib], x[ia]
     return x
 
+def _market_prob_index(cols_mkt):
+    """Index of the morning market probability inside the market context vector."""
+    if "fair_prob_A" in cols_mkt:
+        return cols_mkt.index("fair_prob_A")
+    if "implied_A" in cols_mkt:
+        return cols_mkt.index("implied_A")
+    return 0
+
+def _build_swapped_sample(xa, xb, xphy, xmkt, cols_mkt, y_true, odds_b):
+    """Build the mirrored A/B training sample.
+
+    Returns (xa_swap, xb_swap, xphy_swap, xmkt_swap, y_prob, y_stake, xgb_x, xgb_y).
+    """
+    xmkt_swap = _swap_market_context(xmkt, cols_mkt)
+    mkt_val = float(xmkt[_market_prob_index(cols_mkt)])
+    y_prob = 1.0 - float(y_true)
+    y_stake = [y_prob, float(odds_b)]
+    xgb_x = np.concatenate([xb, xa, xphy, xmkt_swap])
+    xgb_y = (1.0 - float(y_true)) - (1.0 - mkt_val)
+    return xb, xa, xphy, xmkt_swap, y_prob, y_stake, xgb_x, xgb_y
+
 
 def calculate_fair_probability(odds_a, odds_b):
     """Standard Multiplicative Normalization to remove Vig."""
@@ -1049,6 +1070,9 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
 
     print(f"[RL-HYDRA V36] Walk-Forward: {len(date_indices)} days")
 
+    # Single source of truth for the morning market probability column
+    mkt_idx = _market_prob_index(cols_MKT)
+
     # ==========================================================================
     # 2. MAIN LOOP
     # ==========================================================================
@@ -1080,11 +1104,7 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
                 preds_stake_raw, xgb_market_residual)
 
             # Debiased Market (per le strategie di confronto)
-            # Fallback se colonna non trovata
-            if 'fair_prob_A' in cols_MKT:
-                raw_mkt_col = XMKT[:, cols_MKT.index('fair_prob_A')]
-            else:
-                raw_mkt_col = XMKT[:, 0]
+            raw_mkt_col = XMKT[:, mkt_idx]
 
             debiased_market = debiaser.debias(raw_mkt_col)
 
@@ -1116,54 +1136,61 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
                     liq_mult = LIQUIDITY_MULT.get(tourney_level, 0.1)
                     effective_cap = MAX_STAKE_LEGAL_CAP * liq_mult
 
-                    # Flat (capped)
-                    stake_flat = min(FLAT_STAKE, effective_cap)
+                    # Flat (capped, never more than the bankroll)
+                    stake_flat = min(
+                        FLAT_STAKE, effective_cap, max(bankroll_flat, 0.0))
                     pnl_flat = stake_flat * \
                         (odds_executed - 1) if won else -stake_flat
                     bankroll_flat += pnl_flat
 
-                    # Perc (capped)
+                    # Perc (capped, never more than the bankroll)
                     stake_perc = min(
-                        max(MIN_STAKE_ABSOLUTE, bankroll_perc * PERC_STAKE), effective_cap)
+                        max(MIN_STAKE_ABSOLUTE, bankroll_perc * PERC_STAKE),
+                        effective_cap, max(bankroll_perc, 0.0))
                     pnl_perc = stake_perc * \
                         (odds_executed - 1) if won else -stake_perc
                     bankroll_perc += pnl_perc
 
-                    # Kelly (capped)
+                    # Kelly (capped, never more than the bankroll)
                     b_k = odds - 1
                     f_star = (b_k * my_prob - (1 - my_prob)) / \
                         b_k if b_k > 0 else 0
                     stake_kelly = min(
-                        max(MIN_STAKE_ABSOLUTE, bankroll_kelly * max(0, f_star) * 0.1), effective_cap)
+                        max(MIN_STAKE_ABSOLUTE, bankroll_kelly * max(0, f_star) * 0.1),
+                        effective_cap, max(bankroll_kelly, 0.0))
                     pnl_kelly = stake_kelly * \
                         (odds_executed - 1) if won else -stake_kelly
                     bankroll_kelly += pnl_kelly
 
-                    # Reference (Adaptive, capped)
+                    # Reference (Adaptive, capped, never more than its own bankroll)
                     stake_sota = min(
-                        stake_kelly * KELLY_FRACTION, effective_cap)
+                        stake_kelly * KELLY_FRACTION, effective_cap,
+                        max(bankroll_sota, 0.0))
                     pnl_sota = stake_sota * \
                         (odds_executed - 1) if won else -stake_sota
                     bankroll_sota += pnl_sota
 
-                    # STAKE HEAD (supervised PnL-shaped head + veto, capped)
+                    # STAKE HEAD (supervised PnL-shaped head + veto, capped, floored)
                     stake_fraction_head = preds_stake_head[i]
-                    stake_head = bankroll_head * stake_fraction_head
                     stake_head = min(
-                        max(MIN_STAKE_ABSOLUTE, stake_head), effective_cap)
+                        max(MIN_STAKE_ABSOLUTE,
+                            bankroll_head * stake_fraction_head),
+                        effective_cap, max(bankroll_head, 0.0))
                     pnl_head = stake_head * \
                         (odds_executed - 1) if won else -stake_head
                     bankroll_head += pnl_head
 
-                    bets_list.append({
-                        'date': d,
-                        'match': names_day[i],
-                        'odds': odds,
-                        'prob': my_prob,
-                        'stake_head': stake_head,
-                        'pnl_head': pnl_head,
-                        'won': won
-                    })
+                    # A ruined StakeHead book is not a bet: do not pollute the log
+                    if stake_head > 0.0:
+                        bets_list.append({
+                            'date': d,
+                            'match': names_day[i],
+                            'odds': odds,
+                            'prob': my_prob,
+                            'stake_head': stake_head,
+                            'pnl_head': pnl_head,
+                            'won': won
+                        })
 
             equity_flat.append(bankroll_flat)
             equity_perc.append(bankroll_perc)
@@ -1182,25 +1209,26 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
             buf_MKT.append(XMKT[k])
             buf_Y_prob.append(Y_true[k])
 
-            # Swapped (Symmetry): the market context must be mirrored too
-            xmkt_swap = _swap_market_context(XMKT[k], cols_MKT)
-            buf_A.append(XB[k])
-            buf_B.append(XA[k])
-            buf_PHY.append(XPHY[k])
-            buf_MKT.append(xmkt_swap)
-            # Se A vince (1), B perde (0).
-            buf_Y_prob.append(1.0 - Y_true[k])
+            # Swapped (Symmetry): features, market context and odds must mirror
+            (xa_s, xb_s, xphy_s, xmkt_s, y_prob_s,
+             y_stake_s, xgb_x_s, xgb_y_s) = _build_swapped_sample(
+                XA[k], XB[k], XPHY[k], XMKT[k], cols_MKT,
+                Y_true[k], Odds_B_full[start_idx + k])
+            buf_A.append(xa_s)
+            buf_B.append(xb_s)
+            buf_PHY.append(xphy_s)
+            buf_MKT.append(xmkt_s)
+            buf_Y_prob.append(y_prob_s)
 
             # Stake Head targets: [Outcome, Odds] - swapped uses odds_B
             odds_k = odds_day[k]
-            odds_b_k = Odds_B_full[start_idx + k]
             buf_Y_stake.append([Y_true[k], odds_k])
-            buf_Y_stake.append([1.0 - Y_true[k], odds_b_k])
+            buf_Y_stake.append(y_stake_s)
 
             # Debiaser Update - PARADIGMA SERA
             # Calibra le predizioni del modello rispetto alla closing_true_prob
-            # Usa mkt_val (fair_prob_A da morning odds) come proxy se predizioni non disponibili
-            mkt_val = XMKT[k, 0]  # fair_prob_A from morning odds
+            # Usa la probabilità mattina (fair_prob_A, o implied_A) come proxy
+            mkt_val = XMKT[k, mkt_idx]
             closing_prob_k = true_prob_day[k]  # closing_true_prob
 
             # Debiaser impara dove la prob mattina differisce dalla closing (calibrazione mercato)
@@ -1216,10 +1244,9 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
             # Positivo = il mercato sottostima, Negativo = il mercato sovrastima
             xgb_buffer_Y.append(Y_true[k] - mkt_val)
 
-            # Swapped market-residual sample
-            flat_swap = np.concatenate([XB[k], XA[k], XPHY[k], xmkt_swap])
-            xgb_buffer_X.append(flat_swap)
-            xgb_buffer_Y.append((1.0 - Y_true[k]) - (1.0 - mkt_val))
+            # Swapped market-residual sample (same helper as the buffers)
+            xgb_buffer_X.append(xgb_x_s)
+            xgb_buffer_Y.append(xgb_y_s)
 
         # Periodic Retraining
         train_counter += 1
@@ -1501,8 +1528,12 @@ def write_results(path, equity_dict, bets, dataset_meta, opening_coverage, confi
         f"Avg odds: {avg_odds:.2f}",
     ]
     for name in ["Flat", "Perc", "Kelly", "Reference", "StakeHead"]:
-        final = equity_dict[name][-1]
-        lines.append(f"{name}: EUR {final:.0f} (P: {final - INITIAL_BANKROLL:+.0f})")
+        raw_final = equity_dict[name][-1]
+        # A bankroll cannot go below zero: report ruin as EUR 0, never a negative equity.
+        final = max(raw_final, 0.0)
+        suffix = " (bankrupt)" if raw_final <= 0.0 else ""
+        lines.append(
+            f"{name}: EUR {final:.0f} (P: {final - INITIAL_BANKROLL:+.0f}){suffix}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1518,9 +1549,13 @@ def write_manifest(path, results, dataset_meta, config):
 
 def _code_commit():
     try:
-        return subprocess.check_output(
+        commit = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"], cwd=BASE_DIR,
             stderr=subprocess.DEVNULL, text=True).strip()
+        dirty = subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=BASE_DIR,
+            stderr=subprocess.DEVNULL, text=True).strip()
+        return commit + ("+dirty" if dirty else "")
     except Exception:
         return "unknown"
 
