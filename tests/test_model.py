@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytest.importorskip("tensorflow")
+
 from hydra_model import (
     _build_swapped_sample,
     _market_prob_index,

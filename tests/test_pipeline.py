@@ -16,3 +16,13 @@ from data_pipeline import standardize_name_strict as s
 def test_name_normalization_matches_both_sources(full, odds, expected):
     assert s(full) == expected
     assert s(odds) == expected
+
+def test_metadata_sidecar_name(tmp_path):
+    from data_pipeline import write_dataset_metadata
+    csv = tmp_path / "tennis_features_v36.csv"
+    csv.write_text("Date\n2020-01-01\n", encoding="utf-8")
+    df = pd.DataFrame({"Date": ["2020-01-01"]})
+    meta = write_dataset_metadata(str(csv), df)
+    assert (tmp_path / "tennis_features_v36.meta.json").exists()
+    assert meta["rows"] == 1
+    assert meta["date_min"] == "2020-01-01"

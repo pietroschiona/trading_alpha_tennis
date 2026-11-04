@@ -1,3 +1,7 @@
+import hashlib
+import json
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -21,6 +25,26 @@ def test_market_brier_coin_flip_is_quarter():
     })
     assert market_brier(df) == pytest.approx(0.25)
 
+
+def test_sidecar_and_dropped_columns():
+    root = Path(__file__).resolve().parents[1]
+    csv = root / "tennis_features_v36.csv"
+    meta_path = root / "tennis_features_v36.meta.json"
+    if not csv.exists() or not meta_path.exists():
+        pytest.skip("local dataset or sidecar missing")
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    columns = pd.read_csv(csv, nrows=0).columns
+    for col in ("score", "Wsets", "_w_sets", "_odds_w_sets", "dedup_key"):
+        assert col not in columns, f"outcome helper column {col} leaked into the dataset"
+
+    h = hashlib.sha256()
+    with open(csv, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    assert meta["sha256"] == h.hexdigest()
+    assert meta["rows"] == len(pd.read_csv(csv, usecols=["Date"]))
+    assert meta["date_min"] <= meta["date_max"]
 
 def test_h2h_correlation_pinned_on_six_matches():
     # One pair, a always beats b: the lagged per-pair win ratio tracks the
