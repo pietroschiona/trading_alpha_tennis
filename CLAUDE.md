@@ -30,6 +30,9 @@ coppie legittime). Non regredire.
   - 3.700 scommesse finanziate dalla stake head, 1.183 vittorie (**32.0%**), avg odds 4.27.
   - Staked **32.229,04**, PnL **-1.000**, **ROI -3.10%**, CI 95% **[-10.19%, +4.13%]**, p=0.81.
   - Flat, Kelly e StakeHead finiscono a 0 (bankrupt); Perc 173; Reference 985.
+  - Provenienza: ROI/CI/p vengono dal run `98fcd55+dirty` del 2026-11-04 e **non sono riproducibili
+    da un commit** finché non si rifà un run pulito; i numeri del dataset e del leak vengono dal
+    sidecar `tennis_features_v36.meta.json`.
 - Riferimento da battere: **Brier di mercato 0.2037** (2018+), non 0.1974 (quello del dataset leakato).
 - Quote opening opzionali: copertura **0.0%** nel run misurato, quindi la separazione mattina/sera
   dell'architettura non è alimentata da dati reali.

@@ -1,3 +1,7 @@
+"""Mappa le righe del dataset scrape-ato sui link tennisexplorer, per anno e coppia di giocatori.
+Uso: python generate_links_ultra_fast.py [dataset.csv] [scraped/] [output_dir/]
+"""
+
 import os
 import re
 import csv
@@ -6,13 +10,22 @@ import multiprocessing
 from collections import defaultdict
 import time
 import datetime
+from pathlib import Path
 
 # --- CONFIG ---
-dataset_path = r"C:\Users\pietr\Desktop\Betting\scraper_per_odds\prova3\Tennis_SOTA_DeepStats_V36.csv"
-scraped_root = r"C:\Users\pietr\Desktop\Betting\scraped-1764175345406"
-output_mapping = r"C:\Users\pietr\Desktop\Betting\scraper_per_odds\prova3\mapped_matches.csv"
-output_links = r"C:\Users\pietr\Desktop\Betting\scraper_per_odds\prova3\verified_links_strict.txt"
-output_missing = r"C:\Users\pietr\Desktop\Betting\scraper_per_odds\prova3\missing_matches.csv"
+ROOT = Path(__file__).resolve().parent
+dataset_path = ROOT / "Tennis_SOTA_DeepStats_V36.csv"
+scraped_root = ROOT / "scraped"
+output_dir = ROOT
+if len(sys.argv) > 1:
+    dataset_path = Path(sys.argv[1])
+if len(sys.argv) > 2:
+    scraped_root = Path(sys.argv[2])
+if len(sys.argv) > 3:
+    output_dir = Path(sys.argv[3])
+output_mapping = output_dir / "mapped_matches.csv"
+output_links = output_dir / "verified_links_strict.txt"
+output_missing = output_dir / "missing_matches.csv"
 
 CPU_CORES = max(1, multiprocessing.cpu_count() - 2)
 
