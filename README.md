@@ -1,470 +1,225 @@
-# trading_alpha_tennis
+# trading-alpha-tennis
 
-> ## ⚠️ I risultati storici di questo progetto erano un data leak
->
-> Il claim originale **"63.3% WR / +30% ROI"** non era un edge: era artefatto di un merge
-> difettoso in `data_pipeline.py`, segnalato da u/1ma9nja su r/algobetting (thread `1tviwt7`,
-> [script di verifica](https://gist.github.com/boristobbe/9ec6a6b96234b7dced1f6195a1a5c1d9)).
->
-> **Causa:** `smart_merge()` abbinava le quote ai match su chiave `anno + giocatori` entro una
-> finestra di 15 giorni. Due match distinti degli stessi giocatori (R16 e QF, o due tornei
-> vicini) collassavano sulla stessa riga; `drop_duplicates` li cancellava a caso e le quote
-> finivano sulla partita sbagliata. Ne consegue che `h2h_ratio` — calcolato con
-> `shift(1).cumsum` sulla data — finiva per contenere l'esito del match corrente:
-> `corr(h2h_ratio, outcome) = 0.336` contro ~0.11 atteso da una feature lecita.
->
-> **Correzione (2026-10):** merge one-to-one con selezione nearest-date, identity check sui
-> set vinti dal vincitore, dedup su chiave reale. Dataset ricostruito da zero.
->
-> **Stato attuale:** il fix ai dati è **verificato** (vedi [Post-Mortem](#post-mortem-il-leak)).
-> Le prestazioni del modello sul dataset ripulito sono **in corso di misurazione** e non sono
-> ancora pubblicate: non si ripubblicano i numeri storici finché non escono da un re-run pulito.
->
-> Cosa *non* è mai stato provato qui: che il sistema batta il mercato. Su dati senza leak il
-> confronto con il Brier di mercato è l'unico riferimento valido.
+[![tests](https://github.com/pietroschiona/trading_alpha_tennis/actions/workflows/tests.yml/badge.svg)](https://github.com/pietroschiona/trading_alpha_tennis/actions/workflows/tests.yml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![python](https://img.shields.io/badge/python-3.10--3.12-blue)](requirements.txt)
 
-**Siamese NN + XGBoost + RL staking for ATP tennis analysis.** I dati grezzi sono match stats
-(schema Jeff Sackmann) e quote closing Pinnacle (tennis-data.co.uk, ~99% di copertura).  
+**A Siamese + XGBoost tennis model, published after a data leak was found and fixed. The honest
+result is negative, and that is the point.**
+
+> The original project claimed **63.3% win rate / +30% ROI**. It was a data leak.
+> After the repair: **1,825 bets, 42.2% win rate, ROI -5.22% (95% CI [-12.72%, +2.28%])**,
+> model Brier **0.2373** vs market **0.2186** on the same bets. No edge.
 
 ---
 
-## Table of Contents
+## TL;DR
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Post-Mortem: il leak](#post-mortem-il-leak)
-- [Scientific Validation](#scientific-validation)
-- [Benchmark Results](#benchmark-results)
-- [Anti-Leakage Design](#anti-leakage-design)
-- [Key Components](#key-components)
-- [Data Pipeline](#data-pipeline)
-- [Project Structure](#project-structure)
-- [FAQ](#faq)
-- [License](#license)
-
----
-
-## Overview
-
-Trading Alpha is a research-grade hybrid ML system combining deep learning (Siamese Neural Networks), gradient boosting (XGBoost), and reinforcement learning (policy-gradient staking) to detect market inefficiencies in ATP tennis betting markets.
-
-**Core insight:** Use XGBoost to model the residuals of the neural network -- the tree-based model captures non-linear patterns and interaction effects that the neural network misses, creating an ensemble that outperforms either model alone.
-
-### Design Principles
-
-| Principle | Implementation |
+| | |
 |---|---|
-| Hydra-Oracle Architecture | Dual-head design: Blind Analyst (physics-only probability) + Aware Trader (market-aware stake) |
-| Residual Ensemble | XGBoost fits on NN residuals, learning what the deep model systematically misses |
-| Online Walk-Forward | Model retrains every 7-14 days with recency-weighted sampling |
-| Anti-Leakage | Morning odds for inference, closing odds ONLY for evening calibration (non ancora alimentato da dati reali) |
-| Real Pinnacle Odds | closing odds da tennis-data.co.uk (PSW/PSL), ~99% copertura 2013-2025 |
+| What it is | Research code for ATP match prediction and betting simulation, with a full audit trail |
+| What it is not | A profitable system, a live bot, or financial advice |
+| Data | 29,535 matches, 2013-2025, TML-Database + tennis-data.co.uk + scraped opening odds (71.3% coverage) |
+| Validation | Walk-forward: 2013-2016 warmup, 2017-2025 out-of-sample, one day at a time |
+| Result | ROI -5.22%, CI contains 0, Brier worse than the market, calibration off by 11.6 points |
+| The lesson | A win rate is not an edge; the market is the only honest benchmark |
+
+Run of record: commit `3cbaf57`, 2026-11-23, data mode `opening_odds`. Artifacts:
+[results](walkforward_results.txt) · [per-bet log](walkforward_bets.csv) · [manifest](walkforward_manifest.json) · [validation report](benchmarks/validation_report.md).
+
+---
+
+## The 2026-10 leak
+
+![Before and after the merge fix](docs/figures/leak.svg)
+
+*What you are looking at:* two matches between the same players, days apart, and one odds line.
+*What it means:* the old `smart_merge()` joined odds on `year + players` within 15 days and
+deduplicated on a key that collapsed both matches. The surviving row could carry the other
+match's odds, and `h2h_ratio` ended up encoding the current result (`corr = 0.336`).
+*What can break:* any loose join key. The fix is a one-to-one merge by nearest date with an
+identity check on sets won and a dedup on `(date, winner, loser)`.
+
+| Quantity | Leaked | Repaired |
+|---|---:|---:|
+| Dataset rows | 55,049 | 29,535 |
+| Duplicate match rows | 1,579 | **0** |
+| `corr(h2h_ratio, outcome)` | +0.336 | **+0.0938** |
+| Market Brier (2018+) | 0.1974 | 0.2037 |
+| Model Brier | 0.1909 (below market) | 0.2373 (above market)† |
+
+† The leaked figure is the pre-fix run's own score. The repaired figure is measured on the 1,825
+logged bets, where the market scores 0.2186 on the same bets — the like-for-like comparison.
+
+The leak was found by u/1ma9nja on r/algobetting (thread `1tviwt7`). The audit that guards it now
+is `verify_leak_fix.py`, and it must pass before any number is read.
 
 ---
 
 ## Architecture
 
-```
-                    DATA PIPELINE
-  data_pipeline.py -> ATP match data (TML-Database) + closing odds (tennis-data.co.uk)
-  -> Feature engineering (ELO, EWMA, surface, momentum, H2H)
+![Hydra-Oracle architecture](docs/figures/architecture.svg)
 
+*What you are looking at:* data flows through a one-to-one merge into features; opening odds feed
+the morning decision; outcomes and closing odds feed the evening learners.
+*What it means:* the model decides with information available before play and learns only from
+matches already finished. Closing odds are a calibration target, never a morning input.
+*What can break:* a match without an opening price is dropped, and coverage is 71.3% overall —
+see [limitations](#limitations).
 
-                    HYBRID MODEL
+Components:
 
-  +---------------------------+   +---------------------------+
-  |   BLIND ANALYST (Head 1)  |   |   XGBoost Censor          |
-  |   Siamese Network         |   |   + Fits on NN residuals  |
-  |   + Twin towers (shared)  |   |   + Windowed memory       |
-  |   + Player A vs B         |   |   + Veto if overconfident |
-  |   + Surface ELO + stats   |   +-----------+---------------+
-  +------------+--------------+               |
-               |                              |
-               +---------------+--------------+
-                               |
-                      +--------+--------+
-                      |   ENSEMBLE      |
-                      |   Predicto      |
-                      +--------+--------+
-                               |
-                      +--------+--------+
-                      | AWARE TRADER    |
-                      | (Head 2: RL)    |
-                      | Policy gradient |
-                      +--------+--------+
-                               |
-                    RISK MANAGEMENT
-  + CUSUM drift detector    + Kelly sizing (adaptive)
-  + Drawdown management     + Probability calibrator
-  + Odds debiaser (Ridge)   + 2% execution slippage
-  + Liquidity caps (EUR 5,000)  + 5-strategy comparison
-```
+- **Blind Analyst** — Siamese towers with shared weights, one player per tower, win probability out.
+- **XGBoost corrector** — fits `outcome − opening market probability`; a negative residual triggers
+  a veto on the stake.
+- **Stake head** — supervised, PnL-shaped; not reinforcement learning. Outputs a bankroll fraction.
+- **OddsDebiaser** — Ridge map from opening to closing probability, used as a calibration aid.
+- **Risk** — edge > 1%, tournament liquidity cap, €5,000 hard cap, 2% execution slippage.
 
-### Dual-Head Design
-
-```
-Input: [Player A stats, Player B stats, Physical context, Market context]
-                    |
-         +----------+-----------+
-         |                      |
-+--------+--------+   +---------+---------+
-|  HEAD 1:        |   |  HEAD 2:          |
-|  BLIND ANALYST  |   |  AWARE TRADER     |
-|                 |   |                   |
-|  Input:         |   |  Input:           |
-|  + Player A     |   |  + Analyst opinion|
-|  + Player B     |   |  + Market context |
-|  + Physics ctx  |   |  + Player features|
-|                 |   |                   |
-|  Output:        |   |  Output:          |
-|  win_prob       |   |  stake_fraction   |
-|  (sigmoid)      |   |  (0 to 5% bank)   |
-+-----------------+   +-------------------+
-```
-
-**Why separate them?** The Blind Analyst predicts match outcomes using physics-only data (player stats, ELO, surface). The Aware Trader sees the analyst's opinion PLUS market context (odds, market efficiency signals) to decide stake size. This separation prevents the model from learning spurious correlations between market noise and match outcomes.
+There is no CUSUM monitor and no isotonic calibrator in the code. Earlier documentation claimed
+both; they were never implemented and the claims were removed.
 
 ---
 
-## Quick Start
+## Walk-forward validation
 
-### Prerequisites
+![Walk-forward timeline](docs/figures/walkforward.svg)
+
+*What you are looking at:* the chronological loop. *What it means:* retraining is periodic and
+strictly backward-looking; no row from the future enters training. *What can break:* a shuffled
+buffer or a global scaler fitted on all dates would silently invalidate every score.
+
+Details and file references: [`docs/methodology.md`](docs/methodology.md).
+
+---
+
+## Results
+
+![Equity curve](docs/figures/equity.png)
+
+*What you are looking at:* the stake-head bankroll over the out-of-sample bets, from €1,000.
+*What it means:* an early rise, then a long decline to €42. *What can break:* a curve like this
+invites "just tune the stake"; the Brier and calibration below show the signal itself is the
+problem, not the sizing.
+
+![Calibration](docs/figures/calibration.png)
+
+*What you are looking at:* reliability by probability bin. *What it means:* the market (gray) sits
+on the diagonal; the model (blue) says 45% and wins 34%. *What can break:* reading a single bin;
+the pattern is systematic across the whole range.
+
+![Brier comparison](docs/figures/brier.png)
+
+*What you are looking at:* Brier score on the same 1,825 bets. *What it means:* the model is worse
+than the market at pricing the bets it chose. *What can break:* comparing against 50% instead of
+the market — that is how the old result looked impressive.
+
+| Metric | Value |
+|---|---|
+| Bets | 1,825 |
+| Wins | 771 (42.2%) |
+| Average odds | 2.83 |
+| Total staked | €18,351 |
+| PnL | -€958 (StakeHead) |
+| ROI | **-5.22%** |
+| 95% bootstrap CI | **[-12.72%, +2.28%]** |
+| p (one-sided, ROI ≤ 0) | 0.9127 |
+| Model Brier | **0.2373** |
+| Market Brier, same bets | **0.2186** |
+| Calibration ECE | 0.1161 |
+
+**Why 42% still loses.** The bets it wins average odds 2.254; the bets it loses average 3.248. Its
+mean probability is 0.539 against a realized 0.4225, while the market's mean on the same bets is
+0.421 — almost exactly the realized rate. The model is overconfident on long shots, and 2%
+slippage turns that into a loss.
+
+Full tables, strategy comparison and integrity tests: [`BENCHMARKS.md`](BENCHMARKS.md).
+
+---
+
+## Quick start
+
+Supported: Python 3.10-3.12 (tested on 3.12), CPU only.
 
 ```bash
 pip install -r requirements.txt
+
+python download_data.py        # ATP matches + closing odds
+python data_pipeline.py        # ~5 min -> tennis_features_v36.csv (20 MB)
+
+python verify_leak_fix.py      # MUST pass before trusting any number
+python -c "import hydra_model as m; raise SystemExit(m.main())"   # ~20 min
+python run_benchmarks.py       # statistical + probability report
+python make_figures.py         # light-theme README figures
 ```
 
-### 1. Scarica i dati grezzi
+The canonical run **requires** the ~1 GB scraped opening-odds file
+(`data/tennis_odds_data_cleaned.csv`, see [`docs/data-sources.md`](docs/data-sources.md)). Without
+it `main()` exits with code 1. A clearly labelled degraded mode exists for debugging:
 
 ```bash
-python download_data.py
+TRADING_ALPHA_ALLOW_CLOSING_FALLBACK=1 python -c "import hydra_model as m; raise SystemExit(m.main())"
 ```
 
-Popola `data/atp_matches_TML/` (26 CSV, TML-Database) e `data/match_odds/` (13 XLSX,
-tennis-data.co.uk). I comandi esatti e le licenze sono in [`docs/data-sources.md`](docs/data-sources.md).
-
-### 2. Rigenera il dataset
-
-```bash
-python data_pipeline.py
-```
-
-~5 min. Produce `tennis_features_v36.csv` (~24.500 righe, 2013-2025).
-
-### 3. Verifica che non ci sia leak — **prima di credere a qualsiasi numero**
-
-```bash
-python verify_leak_fix.py
-```
-
-Deve stampare 0 duplicati e `corr(h2h_ratio, outcome)` sotto 0.15. Se fallisce, fermati:
-i risultati che verranno fuori non significano niente.
-
-### 4. Train + backtest
-
-```bash
-python -c "import hydra_model as m; m.main()"   # ~8 min
-python run_benchmarks.py --quick                 # test statistici, ~30 s
-```
-
-### View Results
-
-```
-walkforward_results.txt    # Strategy comparison results
-charts/                    # Equity curve plots
-benchmarks/                # Statistical validation reports
-```
-
-### (Optional) Quote opening
-
-Solo per odds fresche: servono le proxy (`scraper/test_proxies.py`) e Chrome installato.
-Non serve per il rebuild storico. Vedi [Data Pipeline](#data-pipeline).
+Its output records `Data mode: closing_fallback` and is never used for published numbers.
 
 ---
 
-## Post-Mortem: il leak
-
-### Il difetto
-
-`smart_merge()` in `data_pipeline.py` costruiva le coppie match↔quote così:
-
-1. join su chiave `anno + winner + loser` (molti-a-molti);
-2. filtro `|Date_match - Date_odds| <= 15 giorni`;
-3. `drop_duplicates(['Date_match', winner, loser], keep='first')`.
-
-Il passo 3 è il bug: due match realmente distinti che condividono i due giocatori e cadono
-nella stessa finestra di 15 giorni producono la **stessa chiave di dedup**. La riga sopravvissuta
-era scelta arbitrariamente, quindi il match conservato poteva avere le quote dell'altro, o nessuna.
-Le quote finivano sulla partita sbagliata e `h2h_ratio` — funzione di `shift(1).cumsum` ordinato per
-data — non poteva più garantire "solo partite precedenti".
-
-### Il fix
-
-- **One-to-one**: ogni match prende al massimo una riga quote, scelta per data più vicina.
-- **Identity check**: il numero di set vinti dal vincitore (impronta del punteggio, indipendente
-  dall'esito) deve coincidere tra match e quote. È ciò che distingue "R16 e QF" da "un match solo".
-- **Dedup su chiave reale** `(data, winner, loser)`.
-- `DATE_TOLERANCE_DAYS = 7`: la `tourney_date` di TML è il lunedì del torneo, il match si gioca
-  fino a 7 giorni dopo. Con 3 giorni si perdevano ~25% delle coppie legittime; la tolleranza non è
-  il problema di qualità, l'ambiguità lo era.
-
-### Verifica
-
-`python verify_leak_fix.py` — replica indipendente dello script di u/1ma9nja sul dataset
-ricostruito:
-
-| Controllo | Leakato | Riparato | Atteso |
-|---|---|---|---|
-| Righe duplicate (Date, winner, loser) | 1.579 | **0** | 0 |
-| `corr(h2h_ratio, outcome)` | +0.336 | **+0.091** | ~0.11 |
-| Brier di mercato (MaxW, 2018+) | 0.1974 | **0.2035** | riferimento |
-| Brier del modello | **0.1909** (sotto il mercato) | da misurare | ≥ mercato |
-
-Un modello che batte il mercato sul Brier è, da solo, sospetto: le quote Pinnacle sono la
-migliore stima disponibile e superarle richiede o informazione non disponibile al momento della
-scommessa, o una perdita di allineamento dei dati. Nel dataset leakato il modello vinceva
-proprio perché allineava i dati al contrario rispetto alla realtà.
-
-### Costo della riparazione
-
-Il dataset riparato ha **24.494 righe** (2013–2025) contro 55.049: il vecchio count era
-gonfiato dai match duplicati e dai match senza quote. La copertura è ~1.900 partite/anno con
-quote, coerente con le ~2.600 partite ATP/anno di cui ~75% hanno quote su tennis-data.co.uk.
-
----
-
-## Scientific Validation
-
-`run_benchmarks.py` esegue 6 test statistici. **I risultati storici (p < 1e-95, BF₁₀ ~ 1e94,
-h = 0.269, "0/200.000 modelli casuali") descrivevano il dataset leakato e non sono più
-riproducibili.** Il test anti-leakage ora eseguibile è quello di `verify_leak_fix.py`, che è la
-verifica prioritaria.
-
-Regola operativa: `corr(feature, target) > 0.15` su una singola feature pre-match è un sospetto
-di leak, non un edge.
-
----
-
-## Benchmark Results
-
-### Storico (VOID — dataset leakato)
-
-Non ripubblicato. I numeri qui sotto erano generati su dati con il merge difettoso e
-non rappresentano il sistema:
-
-- ~~63.3% win rate su 6.067 scommesse~~
-- ~~Brier 0.1909, sotto il benchmark di mercato 0.1974~~
-- ~~EUR 3.979.788 di equity finale con RL_Agent~~
-
-### Attuale
-
-Da misurare: `python -c "import hydra_model as m; m.main()"` poi `python run_benchmarks.py`.
-Il riferimento da battere è il **Brier di mercato (0.2035, 2018+)**, non il 50% della moneta.
-Se il modello non sta almeno sul mercato, il risultato onesto è "nessun edge".
-
----
-
-## Anti-Leakage Design
-
-> **Stato reale dei dati:** il dataset ricostruato contiene **solo quote closing**
-> (tennis-data.co.uk). Non c'è una serie di opening odds pulita e verificata a copertura
-> sufficiente. Quindi la separazione "mattina si decide, sera si calibra" descritta sotto è
-> **l'architettura prevista, non ciò che i dati attuali supportano**: oggi l'inferenza e la
-> calibrazione usano la stessa fonte. Va risolta prima di rivendicare un edge — usare una
-> closing price per decidere una scommessa da mettersi è il caso più comune di edge fittizio dopo
-> il disallineamento dei dati.
-
-L'architettura prevista separa i due tempi:
-
-| Fase | Dati usati | Cosa succede |
-|---|---|---|
-| Mattino (inferenza) | quote opening | predice win probability + stake |
-| Sera (calibrazione) | esito reale | allena la value head (BCE) |
-| Sera (debiaser) | quote closing | calibra il drift opening→closing |
-| Retraining | solo match passati (max 8.192) | NN ogni 7g, XGBoost ogni 14g |
-
-### Key Principles
-
-1. **XGBoost trains on residuals of actual outcomes**, not on closing odds
-2. **OddsDebiaser** (Ridge regression) maps opening probability to closing probability, learning market drift patterns
-3. **Market_Inefficiency feature is hardcoded to 0.0** -- previous versions leaked closing odds through this feature
-4. **Distillation loss uses actual outcomes only** -- closing_true_prob is passed to the loss function but never used for gradient computation
-5. **Ogni feature storica usa `shift(1)`**: `h2h_ratio`, EWMA e fatigue guardano solo date
-   strettamente precedenti. Corr(`h2h_ratio`, outcome) deve restare sotto ~0.15
-
-### Data Flow for Match Day t
-```
-  1. Load opening odds (Pinnacle or fallback)
-  2. Predict: win_prob, stake_fraction
-  3. Execute bets where edge detected
-  4. Match completes, outcome recorded
-  5. Update training buffers with outcome
-  6. Periodically: retrain NN, XGBoost, debiaser
-  7. Move to day t+1 (model never sees future data)
-```
-
----
-
-## Key Components
-
-### 1. Deep Siamese Network (build_hydra_model)
-- Twin towers (shared weights, ~7,500 parameters total)
-- Dual head: Value (win probability) + Policy (stake fraction)
-- Custom loss: Binary Crossentropy for value, PnL-aware for policy
-- Features: ELO (global + per-surface), EWMA (17 stats), derived metrics (SSI, Fragility, Fatigue)
-
-### 2. XGBoost Residual Corrector
-- Fits on NN residuals: actual_outcome - predicted_prob
-- Windowed training (last ~20K matches, retrained every 14 days)
-- Veto mechanism: if residual < -0.02 (model overconfident), stake set to 0
-
-### 3. Risk Management Suite
-- **OddsDebiaser:** Ridge regression on opening-to-closing probability drift
-- **ProbabilityCalibrator:** Isotonic regression for probability calibration
-- **CUSUMDriftDetector:** Real-time model degradation monitoring
-- **KellySizingAdaptive:** Drawdown-aware fractional Kelly
-- **Execution Slippage:** 2% on all bets (realistic market impact)
-
-### 4. Walk-Forward Engine
-- Chronological processing: model never sees future data
-- Online learning: retrains on accumulating buffer
-- Symmetry augmentation: each match included A->B and B->A
-- Recency weighting: recent samples weighted higher during training
-
----
-
-## Data Pipeline
-
-### Required Files
-
-| Cosa | Dove | Fonte | Scaricabile |
-|---|---|---|---|
-| Match stats 2000–2025 | `data/atp_matches_TML/` | TML-Database (schema Jeff Sackmann), 26 CSV annuali | Sì, da GitHub |
-| Quote closing 2013–2025 | `data/match_odds/` | tennis-data.co.uk, 13 XLSX annuali (PSW/PSL = Pinnacle) | Sì, da GitHub |
-| Quote opening | `data/tennis_odds_data_cleaned.csv` (~1 GB) | scrapate da tennisexplorer.com con `scraper/` | Solo se si hanno le proxy |
-| Dataset features | `tennis_features_v36.csv` | generato da `data_pipeline.py` | No, si rigenera |
-
-Nessun CSV grande è nel repo: tutto si ri-scarica o si rigenera. I comandi esatti sono in
-[`docs/data-sources.md`](docs/data-sources.md).
-
-**Attenzione alla copertura:** `MaxW`/`AvgW` da tennis-data.co.uk sono **closing**, non opening.
-Trattarli come opening e poi usarli come se fossero l'informazione disponibile *prima* del match è
-un leak di per sé, oltre a quello già corretto.
-
-### Feature Engineering (84 features)
-
-**data_pipeline.py** generates the full feature set from raw ATP match data:
-- **Financial features:** Implied probability, synthetic opening odds (Prelec FLB), sentiment bias
-- **Contextual metrics:** sCPI (Synthetic Court Pace Index)
-- **Historical features:** EWMA (17 metrics), Fatigue Load, Fragility Index, SSI, Clutch Factor
-- **ELO ratings:** Global + 4 surface-specific (clay, grass, hard, carpet)
-
----
-
-## Project Structure
+## What is in the repository
 
 ```
-trading-alpha/
-|
-+-- README.md                  This file
-+-- CLAUDE.md                  Regole di progetto e lezione anti-leak
-+-- BENCHMARKS.md              Scientific validation and methodology
-+-- requirements.txt           Python dependencies
-+-- requirements-scraping.txt  Selenium, per lo scraper delle quote
-+-- .gitignore                 Esclude CSV grandi e log dal git
-+-- download_data.py           Helper per il CSV delle quote
-+-- verify_leak_fix.py         Replica indipendente del test anti-leak
-|
-+-- hydra_model.py             Main model (1,741 lines)
-|                               Siamese Network + XGBoost + RL
-|                               Walk-forward validation engine
-|                               Risk management and charting
-|
-+-- data_pipeline.py           Data pipeline (668 lines)
-|                               ATP match loading
-|                               Feature engineering (ELO, EWMA, etc.)
-|                               Merge match<->odds one-to-one (post-fix)
-|
-+-- run_benchmarks.py          Validation framework
-|                               Statistical significance tests
-|                               Monte Carlo simulation
-|                               Anti-leakage verification
-|
-+-- docs/
-|   +-- data-sources.md        Fonti dati, licenze, comandi di download
-|   +-- RUNBOOK.md             Runbook operativo
-|
-+-- scraper/                   Selenium scraper di tennisexplorer.com
-|   +-- scraper.py             Estrae le quote dai link dei match
-|   +-- orchestrator.py        Gira i match su più proxy (resume-safe)
-|   +-- test_proxies.py        Verifica le proxy prima di partire
-|   +-- links_*.txt            Lista dei match ATP
-|
-+-- data/                      Raw, non nel git
-|   +-- atp_matches_TML/       26 CSV annuali, match stats (schema Sackmann)
-|   +-- match_odds/            13 XLSX annuali, quote closing
-|   +-- tennis_odds_data_cleaned.csv   ~1GB, quote opening scrapate
-|
-+-- tennis_features_v36.csv    Dataset ricostruito (non nel git)
-+-- charts/                    Generated equity curve plots
-|   +-- Run1_5Strategies_Full.png
-|   +-- Run1_5Strategies_2025.png
-|   +-- Run1_Normal_Full.png, Run1_Normal_2025.png
-|   +-- Run1_Exponential_Full.png, Run1_Exponential_2025.png
-|
-+-- model_state/               Saved model checkpoints
-|   +-- best_hydra_rl_model.keras
-|   +-- scaler.pkl
-|   +-- feature_columns.pkl
-|
-+-- benchmarks/                Generated benchmark reports
-|   +-- validation_report.md
-|   +-- benchmark_results.json
-|
-+-- walkforward_results.txt    Latest walk-forward results
+hydra_model.py          model, walk-forward engine, risk, artifacts
+data_pipeline.py        raw data -> features, one-to-one odds merge
+run_benchmarks.py       returns, Brier, calibration, integrity tests
+verify_leak_fix.py      mandatory anti-leak audit
+make_figures.py         README figures from walkforward_bets.csv
+tests/                  unit tests (34)
+docs/                   index, architecture, methodology, data card, runbook, reproducibility
+docs/figures/           architecture, leak and walk-forward diagrams + result charts
+walkforward_*.{txt,csv,json}   published run artifacts
+benchmarks/             generated validation report
 ```
+
+Start reading at [`docs/index.md`](docs/index.md).
+
+---
+
+## Limitations
+
+- **Sample selection.** The model only sees the 71.3% of matches with opening odds; coverage falls
+  to 57.8% in 2024. The betting sample skews toward well-covered tournaments.
+- **Market as opponent.** Pinnacle's opening price is the best public estimate. A model that
+  appears to beat its Brier by a lot is a leakage symptom first.
+- **One run, one seed.** The bootstrap CI is wide because it should be.
+- **No live execution.** Slippage is a flat 2%; stake caps are simulated.
+- **No CLV.** The bet log records opening prices; closing-line value is future work, not estimated.
 
 ---
 
 ## FAQ
 
-**Q: Are the results real or data leakage?**
-A: **Erano leakage.** I test statistici passavano perché misuravano la contaminazione, non
-l'edge: un modico disallineamento delle quote produce un segnale enorme e perfettamente
-"significativo". La verifica corretta è `verify_leak_fix.py`.
+**Is the 42% win rate good?**
+Not by itself. At average odds 2.83 the break-even rate is about 35%, so 42% looks positive — but
+the wins are cheap and the losses expensive, and the ROI is negative.
 
-**Q: Can I run this without the Pinnacle CSV?**
-A: Yes, the model falls back to closing odds. Results will be less accurate but the pipeline works end-to-end.
+**Why publish a negative result?**
+Because the alternative is the previous version of this repository, which advertised a 63% win rate
+produced by a data leak. A reproducible negative result is worth more than an unreproducible
+positive one.
 
-**Q: What makes this different from a simple ELO model?**
-A: ELO is a single-feature system. This model uses 84 features + neural network + XGBoost + RL policy optimization.
+**Can I use this to bet?**
+No. The measured result argues against it, and betting can be harmful.
 
-**Q: Why are the historical profits so high?**
-A: Erano finti. Venivano da un merge difettoso che disallineava le quote dai match e faceva
-leggere al modello l'esito corrente nelle feature storiche. Vedi
-[Post-Mortem](#post-mortem-il-leak).
-
-**Q: How long does it take to run?**
-A: Full walk-forward: ~8 minutes. Quick validation: ~30 seconds.
-
-**Q: Is this production-ready?**
-A: No. Il progetto è alla stato di ricerca e, dopo la riparazione del leak, **non ha ancora un
-edge dimostrato sul mercato**. Prima di usarlo serve un re-run pulito con il Brier di mercato
-(0.2035) come riferimento.
+**Where do the numbers come from?**
+`walkforward_results.txt` (headline), `walkforward_bets.csv` (per bet), `benchmarks/validation_report.md`
+(tests). `run_benchmarks.py` marks the report **VOID** if the dataset hash does not match.
 
 ---
 
-## License
+## Contributing, citation, license
 
-Apache License 2.0
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — the one rule: never loosen the temporal contract.
+- [`CITATION.cff`](CITATION.cff) — citation metadata.
+- Apache-2.0, see [`LICENSE`](LICENSE).
 
-## Author
-
-**Pietro Schiona** -- [GitHub](https://github.com/pietroschiona)
-
----
-
-*Dataset ricostruito su TML-Database (schema Jeff Sackmann) + quote closing tennis-data.co.uk.
-Verifica anti-leak: 0 duplicati, corr(h2h, outcome) = 0.091. Le prestazioni storiche sono
-annullate.*
+Author: Pietro Schiona — [GitHub](https://github.com/pietroschiona).

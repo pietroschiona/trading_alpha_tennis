@@ -571,8 +571,9 @@ def format_report(tests: dict, results: dict) -> str:
                          f"{b['mean_prob']:.3f} | {b['win_rate']:.3f} |")
         lines.extend([
             "",
-            "Bins below the diagonal are overconfident: the model says 45% and "
-            "wins 36%. That gap is the leak-free result, not a tuning problem.",
+            "Bins below the diagonal are overconfident: the predicted probability "
+            "sits above the observed win rate. That gap is the leak-free result, "
+            "not a tuning problem.",
         ])
 
     if brier is not None and not (isinstance(brier, float) and math.isnan(brier)):

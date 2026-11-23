@@ -34,10 +34,11 @@ def _style(ax, title, xlabel, ylabel):
 
 
 def load_bets(path):
-    bets = pd.read_csv(path, parse_dates=["date"])
-    for col in ("prob", "market_prob", "stake_head", "pnl_head", "won"):
+    bets = pd.read_csv(path)
+    for col in ("date", "prob", "market_prob", "stake_head", "pnl_head", "won"):
         if col not in bets.columns:
             raise SystemExit(f"walkforward_bets.csv has no '{col}' column")
+    bets["date"] = pd.to_datetime(bets["date"], errors="raise")
     return bets.sort_values("date").reset_index(drop=True)
 
 
@@ -108,6 +109,10 @@ def brier_figure(bets, out):
     prob = bets["prob"].to_numpy(dtype=float)
     market = bets["market_prob"].to_numpy(dtype=float)
     won = bets["won"].to_numpy(dtype=float)
+    keep = np.isfinite(prob) & np.isfinite(market) & np.isfinite(won)
+    prob, market, won = prob[keep], market[keep], won[keep]
+    if prob.size == 0:
+        raise SystemExit("no finite prob/market_prob/won rows for the Brier figure")
     model_brier = float(np.mean((prob - won) ** 2))
     market_brier = float(np.mean((market - won) ** 2))
 

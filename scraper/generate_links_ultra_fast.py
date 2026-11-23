@@ -23,6 +23,7 @@ if len(sys.argv) > 2:
     scraped_root = Path(sys.argv[2])
 if len(sys.argv) > 3:
     output_dir = Path(sys.argv[3])
+output_dir.mkdir(parents=True, exist_ok=True)
 output_mapping = output_dir / "mapped_matches.csv"
 output_links = output_dir / "verified_links_strict.txt"
 output_missing = output_dir / "missing_matches.csv"

@@ -10,6 +10,11 @@ from data_pipeline import standardize_name_strict as s
     ("Pablo Carreno Busta", "Carreno Busta P.", "busta p"),
     ("Juan Martin Del Potro", "Del Potro J.M.", "potro j"),
     ("Yen-Hsun Lu", "Lu Y.", "lu y"),
+    ("Yen-Hsun Lu", "Lu Y.H.", "lu y"),
+    ("Duckhee Lee", "Lee D.H.", "lee d"),
+    ("Tung-Lin Wu", "Wu T.L.", "wu t"),
+    ("Alex Bogomolov Jr.", "Bogomolov A.", "bogomolov a"),
+    ("Alex Bogomolov Jr.", "Bogomolov Jr. A.", "bogomolov a"),
     ("Felix Auger-Aliassime", "Auger-Aliassime F.", "aliassime f"),
     ("Botic van de Zandschulp", "Van De Zandschulp B.", "zandschulp b"),
 ])

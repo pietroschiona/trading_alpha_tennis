@@ -27,8 +27,10 @@ BETS = Path("walkforward_bets.csv")
 
 def _brier(prob, outcome) -> float:
     p = pd.to_numeric(prob, errors="coerce")
-    y = outcome.astype(str).str.lower().isin(["true", "1", "1.0"]).astype(float)
-    keep = p.notna()
+    y = pd.to_numeric(
+        outcome.astype(str).str.lower().replace({"true": 1, "false": 0}),
+        errors="coerce")
+    keep = p.notna() & y.notna()
     return float(((p[keep] - y[keep]) ** 2).mean())
 
 
@@ -53,7 +55,7 @@ def main() -> int:
 
     print("\nSTEP 3 - market Brier reference (2018+)")
     mb = market_brier(df)
-    print(f"  market Brier: {mb:.4f} (leaked dataset: 0.1974; repaired reference: 0.2035)")
+    print(f"  market Brier: {mb:.4f} (leaked dataset: 0.1974)")
     print("  A leak-free model must not beat the market Brier without a reason.")
 
     if BETS.exists():

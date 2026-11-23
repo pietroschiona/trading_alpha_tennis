@@ -106,29 +106,64 @@ print("✨ All generation parameters grouped at file top for full control")
 # ==============================================================================
 
 def standardize_name_strict(name):
-    """Normalize a name to 'surname initial' across TML and tennis-data formats."""
+    """Normalize a name to 'surname initial' across TML and tennis-data formats.
+
+    Handles both orders ("Jannik Sinner" / "Sinner J."), multi-initial
+    abbreviations ("Lu Y.H.", "Del Potro J.M.") and suffixes ("Bogomolov Jr.").
+    """
     if not isinstance(name, str) or pd.isna(name):
         return ""
     raw = unidecode(name).strip()
-    had_period = "." in raw
-    clean = re.sub(r"[^a-z\s,]", " ", raw.lower())
-    parts = [p for p in re.split(r"[\s,]+", clean) if p]
-    if not parts:
+    if not raw:
         return ""
-    if len(parts) == 1:
-        return parts[0]
-    last = parts[-1]
-    is_initials = len(last) == 1 or (had_period and len(last) <= 3 and last.isalpha())
-    if is_initials:
-        # Skip the run of initials ("Del Potro J.M." -> surname "potro", initial "j")
-        idx = len(parts) - 1
-        while idx >= 0 and (len(parts[idx]) == 1 or
-                            (had_period and len(parts[idx]) <= 3 and parts[idx].isalpha())):
-            idx -= 1
-        if 0 <= idx < len(parts) - 1:
-            return f"{parts[idx]} {parts[idx + 1][0]}"
-        return f"{parts[-2]} {last[0]}"
-    return f"{last} {parts[0][0]}"
+
+    # "Sinner, Jannik" -> surname part before the comma, given names after.
+    comma = "," in raw
+    surname_hint = []
+    if comma:
+        left, right = raw.split(",", 1)
+        surname_hint = [p for p in re.split(r"[\s]+", re.sub(r"[^A-Za-z\s]", " ", unidecode(left))) if p]
+        raw = right
+
+    toks = []  # (lowercase letters, contained a dot)
+    for piece in re.split(r"[\s]+", re.sub(r"[^A-Za-z.\s]", " ", raw)):
+        if not piece:
+            continue
+        letters = re.sub(r"[^a-z]", "", piece.lower())
+        if letters:
+            toks.append((letters, "." in piece))
+
+    # Drop generational suffixes ("Jr.", "Sr.", "III") wherever they appear.
+    suffixes = ("jr", "sr", "ii", "iii", "iv")
+    toks = [(letters, dot) for i, (letters, dot) in enumerate(toks)
+            if not (letters in suffixes and (dot or i == len(toks) - 1))]
+    if surname_hint:
+        # Comma format: the surname is known; the initial comes from the rest.
+        surname = re.sub(r"[^a-z]", "", unidecode(surname_hint[-1]).lower())
+        first_initial = toks[0][0][0] if toks else ""
+        return f"{surname} {first_initial}".strip()
+    if not toks:
+        return ""
+    if len(toks) == 1:
+        return toks[0][0]
+
+    def is_initial(letters, had_dot):
+        # A dot marks an abbreviation ("J.M."), a single letter is an initial.
+        return len(letters) == 1 or (had_dot and len(letters) <= 3)
+
+    initial_idx = next((i for i, (letters, dot) in enumerate(toks)
+                        if is_initial(letters, dot)), None)
+    surname_idx = next((i for i in range(len(toks) - 1, -1, -1)
+                        if not is_initial(*toks[i])), None)
+    if surname_idx is None:
+        # Only initials: fall back to the last token as surname.
+        surname_idx = len(toks) - 1
+        initial_idx = 0
+    surname = toks[surname_idx][0]
+    if surname_idx == initial_idx:
+        initial_idx = 0 if initial_idx else 1
+    initial = toks[initial_idx][0][0] if initial_idx is not None else toks[0][0][0]
+    return f"{surname} {initial}"
 
 def parse_date_robust(date_val):
     """Gestisce formati data misti (YYYYMMDD, Excel, ISO)."""
