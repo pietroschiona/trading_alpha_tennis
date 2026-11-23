@@ -1,9 +1,9 @@
 {
-  "rows": 29535,
+  "rows": 29712,
   "date_min": "2012-12-31",
   "date_max": "2025-11-16",
-  "sha256": "362c5f1ee38ea080edf7692b80b235f7b0ae4124e6a130a9eef2a2926b9c3c0d",
+  "sha256": "467c8a17369bf9126969f06793149fd65e98cd9d930f16572e1fb4e9e897c5bb",
   "seed": 42,
   "date_tolerance_days": 7,
-  "generated_at": "2026-11-04T19:34:23.111242+00:00"
+  "generated_at": "2026-11-23T12:28:04.854372+00:00"
 }

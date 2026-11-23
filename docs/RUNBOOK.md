@@ -60,9 +60,9 @@ closing odds.
 Coverage measured on the published dataset with the loader used by `main()`:
 
 ```
-overall            71.3%   (21,069 / 29,535 matches)
-2013-2016          82.8 / 80.2 / 81.3 / 71.7 %
-2017-2025          77.7 / 78.6 / 70.5 / 68.5 / 70.0 / 67.4 / 62.3 / 57.8 / 59.0 %
+overall            71.1%   (21,134 / 29,712 matches)
+2013-2016          81.9 / 79.4 / 81.0 / 71.4 %
+2017-2025          77.3 / 78.6 / 70.4 / 68.4 / 69.9 / 67.4 / 62.2 / 57.8 / 59.0 %
 ```
 
 `MaxW`/`AvgW` in tennis-data.co.uk are closing prices. They are never used as morning

@@ -8,8 +8,8 @@
 result is negative, and that is the point.**
 
 > The original project claimed **63.3% win rate / +30% ROI**. It was a data leak.
-> After the repair: **1,825 bets, 42.2% win rate, ROI -5.22% (95% CI [-12.72%, +2.28%])**,
-> model Brier **0.2373** vs market **0.2186** on the same bets. No edge.
+> After the repair: **1,789 bets, 42.5% win rate, ROI -8.05% (95% CI [-15.97%, -0.13%])**,
+> model Brier **0.2357** vs market **0.2167** on the same bets. No edge.
 
 ---
 
@@ -19,12 +19,12 @@ result is negative, and that is the point.**
 |---|---|
 | What it is | Research code for ATP match prediction and betting simulation, with a full audit trail |
 | What it is not | A profitable system, a live bot, or financial advice |
-| Data | 29,535 matches, 2013-2025, TML-Database + tennis-data.co.uk + scraped opening odds (71.3% coverage) |
+| Data | 29,712 matches, 2013-2025, TML-Database + tennis-data.co.uk + scraped opening odds (71.1% coverage) |
 | Validation | Walk-forward: 2013-2016 warmup, 2017-2025 out-of-sample, one day at a time |
-| Result | ROI -5.22%, CI contains 0, Brier worse than the market, calibration off by 11.6 points |
+| Result | ROI -8.05%, 95% CI entirely below zero, Brier worse than the market, calibration off by 11.4 points |
 | The lesson | A win rate is not an edge; the market is the only honest benchmark |
 
-Run of record: commit `3cbaf57`, 2026-11-23, data mode `opening_odds`. Artifacts:
+Run of record: commit `e2a3af3`, 2026-11-23, data mode `opening_odds`. Artifacts:
 [results](walkforward_results.txt) · [per-bet log](walkforward_bets.csv) · [manifest](walkforward_manifest.json) · [validation report](benchmarks/validation_report.md).
 
 ---
@@ -42,14 +42,14 @@ identity check on sets won and a dedup on `(date, winner, loser)`.
 
 | Quantity | Leaked | Repaired |
 |---|---:|---:|
-| Dataset rows | 55,049 | 29,535 |
+| Dataset rows | 55,049 | 29,712 |
 | Duplicate match rows | 1,579 | **0** |
-| `corr(h2h_ratio, outcome)` | +0.336 | **+0.0938** |
-| Market Brier (2018+) | 0.1974 | 0.2037 |
-| Model Brier | 0.1909 (below market) | 0.2373 (above market)† |
+| `corr(h2h_ratio, outcome)` | +0.336 | **+0.0936** |
+| Market Brier (2018+) | 0.1974 | 0.2036 |
+| Model Brier | 0.1909 (below market) | 0.2357 (above market)† |
 
-† The leaked figure is the pre-fix run's own score. The repaired figure is measured on the 1,825
-logged bets, where the market scores 0.2186 on the same bets — the like-for-like comparison.
+† The leaked figure is the pre-fix run's own score. The repaired figure is measured on the 1,789
+logged bets, where the market scores 0.2167 on the same bets — the like-for-like comparison.
 
 The leak was found by u/1ma9nja on r/algobetting (thread `1tviwt7`). The audit that guards it now
 is `verify_leak_fix.py`, and it must pass before any number is read.
@@ -64,7 +64,7 @@ is `verify_leak_fix.py`, and it must pass before any number is read.
 the morning decision; outcomes and closing odds feed the evening learners.
 *What it means:* the model decides with information available before play and learns only from
 matches already finished. Closing odds are a calibration target, never a morning input.
-*What can break:* a match without an opening price is dropped, and coverage is 71.3% overall —
+*What can break:* a match without an opening price is dropped, and coverage is 71.1% overall —
 see [limitations](#limitations).
 
 Components:
@@ -105,32 +105,32 @@ problem, not the sizing.
 ![Calibration](docs/figures/calibration.png)
 
 *What you are looking at:* reliability by probability bin. *What it means:* the market (gray) sits
-on the diagonal; the model (blue) says 45% and wins 34%. *What can break:* reading a single bin;
+on the diagonal; the model (blue) says 45% and wins 31%. *What can break:* reading a single bin;
 the pattern is systematic across the whole range.
 
 ![Brier comparison](docs/figures/brier.png)
 
-*What you are looking at:* Brier score on the same 1,825 bets. *What it means:* the model is worse
+*What you are looking at:* Brier score on the same 1,789 bets. *What it means:* the model is worse
 than the market at pricing the bets it chose. *What can break:* comparing against 50% instead of
 the market — that is how the old result looked impressive.
 
 | Metric | Value |
 |---|---|
-| Bets | 1,825 |
-| Wins | 771 (42.2%) |
-| Average odds | 2.83 |
-| Total staked | €18,351 |
+| Bets | 1,789 |
+| Wins | 760 (42.5%) |
+| Average odds | 2.75 |
+| Total staked | €11,898 |
 | PnL | -€958 (StakeHead) |
-| ROI | **-5.22%** |
-| 95% bootstrap CI | **[-12.72%, +2.28%]** |
-| p (one-sided, ROI ≤ 0) | 0.9127 |
-| Model Brier | **0.2373** |
-| Market Brier, same bets | **0.2186** |
-| Calibration ECE | 0.1161 |
+| ROI | **-8.05%** |
+| 95% bootstrap CI | **[-15.97%, -0.13%]** |
+| p (one-sided, ROI ≤ 0) | 0.9769 |
+| Model Brier | **0.2357** |
+| Market Brier, same bets | **0.2167** |
+| Calibration ECE | 0.1144 |
 
-**Why 42% still loses.** The bets it wins average odds 2.254; the bets it loses average 3.248. Its
-mean probability is 0.539 against a realized 0.4225, while the market's mean on the same bets is
-0.421 — almost exactly the realized rate. The model is overconfident on long shots, and 2%
+**Why 42% still loses.** The bets it wins average odds 2.234; the bets it loses average 3.130. Its
+mean probability is 0.539 against a realized 0.4248, while the market's mean on the same bets is
+0.4236 — almost exactly the realized rate. The model is overconfident on long shots, and 2%
 slippage turns that into a loss.
 
 Full tables, strategy comparison and integrity tests: [`BENCHMARKS.md`](BENCHMARKS.md).
@@ -173,7 +173,7 @@ data_pipeline.py        raw data -> features, one-to-one odds merge
 run_benchmarks.py       returns, Brier, calibration, integrity tests
 verify_leak_fix.py      mandatory anti-leak audit
 make_figures.py         README figures from walkforward_bets.csv
-tests/                  unit tests (34)
+tests/                  unit tests (39)
 docs/                   index, architecture, methodology, data card, runbook, reproducibility
 docs/figures/           architecture, leak and walk-forward diagrams + result charts
 walkforward_*.{txt,csv,json}   published run artifacts
@@ -186,7 +186,7 @@ Start reading at [`docs/index.md`](docs/index.md).
 
 ## Limitations
 
-- **Sample selection.** The model only sees the 71.3% of matches with opening odds; coverage falls
+- **Sample selection.** The model only sees the 71.1% of matches with opening odds; coverage falls
   to 57.8% in 2024. The betting sample skews toward well-covered tournaments.
 - **Market as opponent.** Pinnacle's opening price is the best public estimate. A model that
   appears to beat its Brier by a lot is a leakage symptom first.
@@ -199,7 +199,7 @@ Start reading at [`docs/index.md`](docs/index.md).
 ## FAQ
 
 **Is the 42% win rate good?**
-Not by itself. At average odds 2.83 the break-even rate is about 35%, so 42% looks positive — but
+Not by itself. At average odds 2.75 the break-even rate is about 36%, so 42.5% looks positive — but
 the wins are cheap and the losses expensive, and the ROI is negative.
 
 **Why publish a negative result?**

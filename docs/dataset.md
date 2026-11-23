@@ -6,12 +6,12 @@ sidecar committed next to it.
 
 | Field | Value |
 |---|---|
-| Rows (matches) | 29,535 |
+| Rows (matches) | 29,712 |
 | Date range | 2012-12-31 .. 2025-11-16 |
 | Columns | 83 |
 | Seed | 42 |
 | Date tolerance in the odds merge | 7 days |
-| SHA-256 | `362c5f1ee38ea080edf7692b80b235f7b0ae4124e6a130a9eef2a2926b9c3c0d` |
+| SHA-256 | `467c8a17369bf9126969f06793149fd65e98cd9d930f16572e1fb4e9e897c5bb` |
 | Sidecar | `tennis_features_v36.meta.json` (tracked) |
 | Generator | `python data_pipeline.py` (~5 min) |
 
@@ -42,7 +42,7 @@ run, never priced with closing odds.
 
 ## Known limitations
 
-- Opening-odds coverage is 71.3% overall, and falls to 57.8% in 2024 (see
+- Opening-odds coverage is 71.1% overall, and falls to 57.8% in 2024 (see
   [`data-sources.md`](data-sources.md)). The betting sample is therefore not the full ATP
   population.
 - Matches between the same two players within 7 days are matched by nearest date plus an

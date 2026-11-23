@@ -11,7 +11,7 @@ Il claim originale "63.3% WR / +30% ROI" era un **leak**, non un edge (segnalato
 r/algobetting, thread `1tviwt7`). Causa: `smart_merge` in `data_pipeline.py` faceva join odds↔match
 su anno+giocatore con tolerance 15 giorni → match distinti fra gli stessi giocatori collassati su
 una riga, `h2h_ratio` (shift/cumsum su `Date`) encodava l'esito del match corrente (corr 0.336 vs
-0.0938 reale).
+0.0936 reale).
 Fix: merge one-to-one nearest-date, identity check sui set vinti dal vincitore, dedup su chiave
 reale, `DATE_TOLERANCE_DAYS = 7`. Non regredire.
 
@@ -23,18 +23,18 @@ reale, `DATE_TOLERANCE_DAYS = 7`. Non regredire.
 - Test di regressione: `python verify_leak_fix.py` (0 duplicati, corr(h2h,outcome) < 0.15) e
   `python run_benchmarks.py` (Test 6 duplicati). Entrambi devono passare **prima** di guardare i numeri.
 
-## Stato al 2026-11-23 — run canonica `3cbaf57`
+## Stato al 2026-11-23 — run canonica `e2a3af3`
 
-- Dataset: **29.535 righe**, sha256 `362c5f1e…c3c0d`, 2012-12-31..2025-11-16, 83 colonne.
-- Opening odds **obbligatorie** di default: copertura **71,3%** (21.069 match modellati), 68,0% sui
+- Dataset: **29.712 righe**, sha256 `467c8a17…e897c5bb`, 2012-12-31..2025-11-16, 83 colonne.
+- Opening odds **obbligatorie** di default: copertura **71,1%** (21.134 match modellati), 67,9% sui
   match 2017+. I match senza opening vengono esclusi, mai prezzati con le closing.
 - Fallback closing solo etichettato: `TRADING_ALPHA_ALLOW_CLOSING_FALLBACK=1` → `Data mode:
   closing_fallback`, mai usato per i numeri pubblicati.
-- Risultati (2017-2025, 1.825 bet): WR **42,2%**, avg odds **2,83**, staked €18.351, PnL StakeHead
-  **-€958**, ROI **-5,22%**, CI 95% **[-12,72%, +2,28%]**, p=0,9127 → **nessun edge**.
-- Brier modello **0,2373** vs mercato **0,2186** sulle stesse bet (delta +0,0186); ECE **0,1161**.
-- Riferimento di mercato sul dataset (2018+): Brier **0,2037**.
-- Flat va in bancarotta alla bet 1.562; Reference chiude a €986 (-€14).
+- Risultati (2017-2025, 1.789 bet): WR **42,5%**, avg odds **2,75**, staked €11.898, PnL StakeHead
+  **-€958**, ROI **-8,05%**, CI 95% **[-15,97%, -0,13%]**, p=0,9769 → **nessun edge**.
+- Brier modello **0,2357** vs mercato **0,2167** sulle stesse bet (delta +0,0190); ECE **0,1144**.
+- Riferimento di mercato sul dataset (2018+): Brier **0,2036**.
+- Flat va in bancarotta alla bet 1.031; Reference chiude a €985 (-€15).
 - Provenienza: `walkforward_results.txt`, `walkforward_bets.csv`, `walkforward_manifest.json`,
   `benchmarks/validation_report.md`. Il manifest deve dire `data_mode: opening_odds`.
 
@@ -60,7 +60,7 @@ python -c "import hydra_model as m; raise SystemExit(m.main())"  # ~20 min, scri
 python run_benchmarks.py                       # return + Brier + calibrazione + integrità
 python run_benchmarks.py --quick               # salta solo il Test 5 (drift)
 python make_figures.py                         # figure chiare del README da walkforward_bets.csv
-python -m pytest tests -q                      # 34 test (requirements-dev.txt)
+python -m pytest tests -q                      # 39 test (requirements-dev.txt)
 ```
 
 Su questa macchina Ubuntu tutto gira in Docker (`python:3.12` + pin di `requirements.txt`); il

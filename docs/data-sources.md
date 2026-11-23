@@ -41,37 +41,37 @@ Optional: The Odds API free tier for next-day matches (500 credits/month).
 ## Measured opening-odds coverage
 
 Computed by `HybridDataLoader.enrich_with_opening_odds()` on the published dataset
-(29,535 matches). A match is covered only when both opening prices exist.
+(29,712 matches). A match is covered only when both opening prices exist.
 
 ```
-overall   71.3%   (21,069 / 29,535)
-Pinnacle  62.5%   (18,457 matches)
-bet365    5.7%    (1,696)
-Betfair   2.7%    (811)
+overall   71.1%   (21,134 / 29,712)
+Pinnacle  62.3%   (18,518 matches)
+bet365    5.7%    (1,698)
+Betfair   2.7%    (813)
 other     0.4%    (105 across Unibet, 10Bet, BetVictor, Betway, Betsafe)
-none      28.7%   (8,466)
+none      28.9%   (8,578)
 ```
 
 | Year | Coverage |
 |---|---|
 | 2012 | 30.8% (partial year) |
-| 2013 | 82.8% |
-| 2014 | 80.2% |
-| 2015 | 81.3% |
-| 2016 | 71.7% |
-| 2017 | 77.7% |
+| 2013 | 81.9% |
+| 2014 | 79.4% |
+| 2015 | 81.0% |
+| 2016 | 71.4% |
+| 2017 | 77.3% |
 | 2018 | 78.6% |
-| 2019 | 70.5% |
-| 2020 | 68.5% |
-| 2021 | 70.0% |
+| 2019 | 70.4% |
+| 2020 | 68.4% |
+| 2021 | 69.9% |
 | 2022 | 67.4% |
-| 2023 | 62.3% |
+| 2023 | 62.2% |
 | 2024 | 57.8% |
 | 2025 | 59.0% |
 
 Earlier notes claimed "Pinnacle ~88.7%". That figure counted coverage only among matches
 that already had a scraped line, not among all matches: the honest denominator is the
-full dataset, hence 71.3% overall. The canonical run drops uncovered matches instead of
+full dataset, hence 71.1% overall. The canonical run drops uncovered matches instead of
 pricing them with closing odds.
 
 ## Data pipeline

@@ -1,0 +1,35 @@
+{
+  "config": {
+    "code_commit": "e2a3af3",
+    "betting_start_year": 2017,
+    "end_year": 2025,
+    "seed": 42,
+    "num_loops": 1,
+    "data_mode": "opening_odds",
+    "modeling_rows": 21134
+  },
+  "dataset": {
+    "rows": 29712,
+    "date_min": "2012-12-31",
+    "date_max": "2025-11-16",
+    "sha256": "467c8a17369bf9126969f06793149fd65e98cd9d930f16572e1fb4e9e897c5bb",
+    "seed": 42,
+    "date_tolerance_days": 7,
+    "generated_at": "2026-11-23T12:28:04.854372+00:00"
+  },
+  "opening_odds_coverage": 71.1295099623048,
+  "results": {
+    "opening_odds_coverage": 71.1295099623048,
+    "bets": 1789,
+    "wins": 760,
+    "win_rate": 42.48183342649525,
+    "avg_odds": "2.7491446",
+    "final_equity": {
+      "Flat": 0.0,
+      "Perc": 249.9353593617265,
+      "Kelly": 29.1695243892391,
+      "Reference": 985.4375428658423,
+      "StakeHead": 42.1699017341945
+    }
+  }
+}

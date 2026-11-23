@@ -48,7 +48,7 @@
 
   <rect x="44" y="276" width="310" height="58" class="box boxData"/>
   <text x="58" y="300" class="t">Opening odds (scraped)</text>
-  <text x="58" y="319" class="src">data/tennis_odds_data_cleaned.csv · 71.3% matched</text>
+  <text x="58" y="319" class="src">data/tennis_odds_data_cleaned.csv · 71.1% matched</text>
 
   <rect x="44" y="360" width="310" height="96" class="box boxData"/>
   <text x="58" y="384" class="t">smart_merge(): one-to-one</text>
@@ -58,7 +58,7 @@
 
   <rect x="44" y="482" width="310" height="86" class="box boxData"/>
   <text x="58" y="506" class="t">tennis_features_v36.csv</text>
-  <text x="58" y="525" class="s">29,535 matches · 2012-12-31 .. 2025-11-16</text>
+  <text x="58" y="525" class="s">29,712 matches · 2012-12-31 .. 2025-11-16</text>
   <text x="58" y="543" class="s">83 columns · sha256 in the sidecar</text>
   <text x="58" y="561" class="src">tennis_features_v36.meta.json</text>
 

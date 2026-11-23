@@ -1,0 +1,18 @@
+TRADING ALPHA - Walk-Forward Results
+Generated: 2026-11-23T12:36:07.660898+00:00
+Code commit: e2a3af3
+Dataset rows: 29712
+Dataset sha256: 467c8a17369bf9126969f06793149fd65e98cd9d930f16572e1fb4e9e897c5bb
+Dataset date range: 2012-12-31..2025-11-16
+Opening odds coverage: 71.1%
+Data mode: opening_odds
+Modeling rows: 21134
+Period: 2017-2025
+Bets: 1789
+Wins: 760/1789 (42.5%)
+Avg odds: 2.75
+Flat: EUR 0 (P: -1000) (bankrupt)
+Perc: EUR 250 (P: -750)
+Kelly: EUR 29 (P: -971)
+Reference: EUR 985 (P: -15)
+StakeHead: EUR 42 (P: -958)

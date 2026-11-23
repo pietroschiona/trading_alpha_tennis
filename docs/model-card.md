@@ -22,8 +22,8 @@ beyond the market. The published answer, after removing a data leak, is **no dem
 
 - ATP singles 2000-2025 from TML-Database (Sackmann schema), filtered to 2013+ for the model.
 - Closing odds 2013-2025 from tennis-data.co.uk.
-- Opening odds scraped from tennisexplorer.com, 71.3% match coverage.
-- Feature dataset: 29,535 matches, 83 columns, sha256 in `tennis_features_v36.meta.json`.
+- Opening odds scraped from tennisexplorer.com, 71.1% match coverage.
+- Feature dataset: 29,712 matches, 83 columns, sha256 in `tennis_features_v36.meta.json`.
 - Details and limitations: [`dataset.md`](dataset.md).
 
 ## Evaluation

@@ -222,7 +222,8 @@ def test_3_bayes_factor(n_bets: int, wins: int) -> dict:
     """Descriptive Test 3: Bayes Factor (BIC approximation) for H0 = 50% win rate"""
     win_rate = wins / n_bets
     if wins == 0 or wins == n_bets:
-        return {"BF10": 0.0, "evidence": "undefined"}
+        return {"BF10": float("inf") if wins == n_bets else 0.0,
+                "evidence": "decisive"}
     log_lik_H0 = wins * math.log(0.5) + (n_bets - wins) * math.log(0.5)
     log_lik_H1 = wins * math.log(win_rate) + (n_bets - wins) * math.log(1 - win_rate)
     BIC_H0 = -2 * log_lik_H0 + 1 * math.log(n_bets)
@@ -371,7 +372,9 @@ def run_market_brier(csv_path) -> float:
 
 
 def _outcome_series(bets) -> pd.Series:
-    return bets["won"].astype(str).str.lower().isin(["true", "1", "1.0"]).astype(float)
+    return (bets["won"].astype(str).str.lower()
+            .map({"true": 1.0, "false": 0.0, "1": 1.0, "0": 0.0,
+                  "1.0": 1.0, "0.0": 0.0}))
 
 
 def brier_metrics(bets) -> dict:
@@ -412,7 +415,13 @@ def brier_metrics(bets) -> dict:
         m = m.where(np.isfinite(m))
         valid = m.notna()
         if valid.any():
-            out["market_brier"] = float(((m[valid] - y[valid]) ** 2).mean())
+            # Score model and market on the same rows, otherwise delta is meaningless.
+            p_m = p[valid]
+            y_m = y[valid]
+            m_m = m[valid]
+            out["n"] = int(valid.sum())
+            out["model_brier"] = float(((p_m - y_m) ** 2).mean())
+            out["market_brier"] = float(((m_m - y_m) ** 2).mean())
             out["market_source"] = source
             out["delta"] = out["model_brier"] - out["market_brier"]
     return out
@@ -793,8 +802,16 @@ def main() -> int:
         print(f"  ROI {ret['roi']*100:+.2f}%  CI95 [{ret['ci_95'][0]*100:+.2f}%, "
               f"{ret['ci_95'][1]*100:+.2f}%]  p = {ret['p_value']:.4f}  "
               f"({ret['n_bets']} bets)")
+        if ret["n_bets"] != results["total_bets"]:
+            provenance["reasons"].append(
+                f"bets count mismatch: {BETS_PATH.name} has {ret['n_bets']} "
+                f"but the results file recorded {results['total_bets']}")
+            provenance["passed"] = False
     else:
         print(f"  NOT MEASURED - {BETS_PATH.name} missing or unusable")
+        provenance["reasons"].append(
+            f"{BETS_PATH.name} missing or unusable: the return test cannot run")
+        provenance["passed"] = False
 
     tests["scores"] = brier_metrics(bets)
     tests["calibration"] = calibration_metrics(bets)
@@ -868,7 +885,7 @@ def main() -> int:
         print(f"  ROI {ret['roi']*100:+.2f}% (CI95 [{ret['ci_95'][0]*100:+.2f}%, "
               f"{ret['ci_95'][1]*100:+.2f}%]), p = {ret['p_value']:.4f}")
     print()
-    return 0 if integrity_ok else 1
+    return 0 if (integrity_ok and ret.get("available")) else 1
 
 
 if __name__ == "__main__":

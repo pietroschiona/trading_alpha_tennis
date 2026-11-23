@@ -1,0 +1,147 @@
+{
+  "provenance": {
+    "passed": true,
+    "reasons": [],
+    "warnings": [],
+    "meta_rows": 29712,
+    "meta_sha256": "467c8a17369bf9126969f06793149fd65e98cd9d930f16572e1fb4e9e897c5bb",
+    "benchmark_commit": "unknown"
+  },
+  "returns": {
+    "available": true,
+    "roi": -0.08050237836165819,
+    "ci_95": [
+      -0.15967558984634786,
+      -0.0012681353375539836
+    ],
+    "p_value": 0.9769,
+    "n_bets": 1789,
+    "total_staked": 11898.15900795798,
+    "total_pnl": -957.830098265805,
+    "max_drawdown": 1256.7412599815339
+  },
+  "scores": {
+    "available": true,
+    "n": 1789,
+    "model_brier": 0.23567184092294982,
+    "market_brier": 0.21668113374169104,
+    "market_source": "market_prob",
+    "delta": 0.01899070718125878
+  },
+  "calibration": {
+    "available": true,
+    "n": 1789,
+    "ece": 0.11442355940749023,
+    "bins": [
+      {
+        "lo": 0.1,
+        "hi": 0.2,
+        "n": 6,
+        "mean_prob": 0.16942846999999997,
+        "win_rate": 0.0
+      },
+      {
+        "lo": 0.2,
+        "hi": 0.30000000000000004,
+        "n": 62,
+        "mean_prob": 0.2620075732258065,
+        "win_rate": 0.1774193548387097
+      },
+      {
+        "lo": 0.30000000000000004,
+        "hi": 0.4,
+        "n": 285,
+        "mean_prob": 0.3619018423508772,
+        "win_rate": 0.2982456140350877
+      },
+      {
+        "lo": 0.4,
+        "hi": 0.5,
+        "n": 460,
+        "mean_prob": 0.45105233536956524,
+        "win_rate": 0.31521739130434784
+      },
+      {
+        "lo": 0.5,
+        "hi": 0.6000000000000001,
+        "n": 384,
+        "mean_prob": 0.5466388859635417,
+        "win_rate": 0.4166666666666667
+      },
+      {
+        "lo": 0.6000000000000001,
+        "hi": 0.7000000000000001,
+        "n": 284,
+        "mean_prob": 0.6474158354929578,
+        "win_rate": 0.5176056338028169
+      },
+      {
+        "lo": 0.7000000000000001,
+        "hi": 0.8,
+        "n": 186,
+        "mean_prob": 0.7474771898387097,
+        "win_rate": 0.6397849462365591
+      },
+      {
+        "lo": 0.8,
+        "hi": 0.9,
+        "n": 105,
+        "mean_prob": 0.843068338190476,
+        "win_rate": 0.7619047619047619
+      },
+      {
+        "lo": 0.9,
+        "hi": 1.0,
+        "n": 17,
+        "mean_prob": 0.9110732805882353,
+        "win_rate": 0.7647058823529411
+      }
+    ]
+  },
+  "duplicate_check": {
+    "total_rows": 29712,
+    "duplicate_rows": 0,
+    "duplicate_groups": 0,
+    "passed": true
+  },
+  "h2h": {
+    "corr": 0.0936,
+    "threshold": 0.15,
+    "passed": true
+  },
+  "market_brier": 0.203646122849733,
+  "descriptive": {
+    "test_1_binomial": {
+      "n_bets": 1789,
+      "wins": 760,
+      "win_rate": 0.4248,
+      "z_score": -6.36,
+      "p_value": 0.9999999999199434,
+      "ci_95": [
+        0.402,
+        0.4478
+      ]
+    },
+    "test_2_monte_carlo": {
+      "n_simulations": 200000,
+      "observed_win_rate": 0.4248,
+      "pct_random_models_achieving_this": 1.0,
+      "p_value_approximation": 1.0
+    },
+    "test_3_bayes_factor": {
+      "BF10": 655411008.6743418,
+      "evidence": "decisive"
+    },
+    "test_4_effect_size": {
+      "cohens_h": 0.1509,
+      "magnitude": "small"
+    }
+  },
+  "market_drift": {
+    "total_betting_matches": 20475,
+    "with_opening_odds": 13904,
+    "coverage_pct": 67.9,
+    "drift_mean": 0.0081,
+    "drift_std": 0.053
+  }
+}
