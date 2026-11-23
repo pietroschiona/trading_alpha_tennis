@@ -1,51 +1,80 @@
-"""Replica dello script di verifica di u/1ma9nja (gist f9579e6a72aafe3f2205c3ff1168a381).
+"""Independent anti-leak audit for the shipped dataset.
 
-Steps:
- 1. duplicate (Date, winner, loser) rows
- 2. corr(h2h_ratio, outcome) after the repo's h2h computation
- 3. market vs model Brier on 2018+ (market must NOT be beaten without leakage)
-Run: python verify_leak_fix.py
+Run this BEFORE trusting any performance number:
+
+    python verify_leak_fix.py
+
+Checks:
+  1. duplicate (Date, winner, loser) rows must be 0;
+  2. corr(h2h_ratio, outcome) must stay below the leak threshold (0.15);
+  3. the market Brier index (2018+) is printed as the reference to beat;
+  4. if a bet log exists, the model Brier is printed next to the market Brier
+     on the same bets.
+
+Exit code 0 only when checks 1 and 2 pass.  This is the same recipe as
+u/1ma9nja's independent verification script (r/algobetting thread 1tviwt7).
 """
+import sys
+from pathlib import Path
+
 import pandas as pd
-import numpy as np
 
-CSV = "tennis_features_v36.csv"
+from leak_checks import H2H_CORR_MAX, duplicate_groups, h2h_correlation, market_brier
 
-df = pd.read_csv(CSV, low_memory=False)
-df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-df = df.dropna(subset=["Date", "winner_name", "loser_name"])
-print(f"Loaded {len(df)} rows")
+DATASET = Path("tennis_features_v36.csv")
+BETS = Path("walkforward_bets.csv")
 
-# STEP 1 — duplicates
-dup_mask = df.duplicated(subset=["Date", "winner_name", "loser_name"], keep=False)
-print(f"\nSTEP 1 — duplicate (Date,winner,loser) rows: {int(dup_mask.sum())} "
-      f"in {df.loc[dup_mask].groupby(['Date','winner_name','loser_name']).ngroups} groups")
-assert dup_mask.sum() == 0, "LEAK: duplicates present"
 
-# STEP 2 — h2h as the model computes it (long format, shift(1).cumsum per pair+surface)
-w = df[["Date", "winner_name", "loser_name", "surface"]].copy()
-w.columns = ["Date", "name", "opp_name", "surface"]; w["target"] = 1
-l = df[["Date", "winner_name", "loser_name", "surface"]].copy()
-l.columns = ["Date", "opp_name", "name", "surface"]
-l["target"] = 0
-long = pd.concat([w, l]).sort_values("Date").reset_index(drop=True)
-long["h2h_wins"] = long.groupby(["name", "opp_name", "surface"])["target"].transform(
-    lambda x: x.shift(1).cumsum()).fillna(0)
-long["h2h_games"] = long.groupby(["name", "opp_name", "surface"])["target"].transform(
-    lambda x: x.shift(1).expanding().count()).fillna(0)
-long["h2h_ratio"] = (long["h2h_wins"] / long["h2h_games"].replace(0, np.nan)).fillna(0.5)
-corr = long["h2h_ratio"].corr(long["target"])
-print(f"\nSTEP 2 — corr(h2h_ratio, outcome): {corr:+.3f}  (leaked was +0.336, leak-free ~0.11)")
-assert corr < 0.15, "LEAK: h2h correlates too much with outcome"
+def _brier(prob, outcome) -> float:
+    p = pd.to_numeric(prob, errors="coerce")
+    y = outcome.astype(str).str.lower().isin(["true", "1", "1.0"]).astype(float)
+    keep = p.notna()
+    return float(((p[keep] - y[keep]) ** 2).mean())
 
-# STEP 3 — market Brier 2018+ (market must not be beatable without leakage)
-b = df[df["Date"].dt.year >= 2018].copy()
-b["p_market_w"] = (1 / b["MaxW"]) / (1 / b["MaxW"] + 1 / b["MaxL"])
-brier_market = ((b["p_market_w"] - 1) ** 2 + (b["p_market_w"]) ** 2 * 0).mean()
-# proper Brier: outcome=1 for winner row
-y = 1.0
-brier_market = ((b["p_market_w"] - 1.0) ** 2).mean()
-print(f"\nSTEP 3 — market (MaxW) Brier [2018+]: {brier_market:.4f}")
-print("Reference: leaked model scored 0.1909 (< market 0.1974) = impossible without leakage.")
-print("A leak-free model must score >= market.")
-print("\nALL CHECKS PASSED ✅")
+
+def main() -> int:
+    if not DATASET.exists():
+        print(f"ERROR: {DATASET} not found. Run data_pipeline.py first.")
+        return 1
+
+    df = pd.read_csv(DATASET, low_memory=False)
+    print(f"Loaded {len(df):,} rows from {DATASET}")
+
+    print("\nSTEP 1 - duplicate (Date, winner, loser) rows")
+    dup = duplicate_groups(df)
+    print(f"  rows: {dup['total_rows']:,}")
+    print(f"  duplicates: {dup['duplicate_rows']} in {dup['duplicate_groups']} groups")
+    print(f"  verdict: {'PASS' if dup['passed'] else 'FAIL'}")
+
+    print("\nSTEP 2 - corr(h2h_ratio, outcome)")
+    corr = h2h_correlation(df)
+    print(f"  correlation: {corr:+.4f} (leaked dataset: +0.336; threshold: {H2H_CORR_MAX})")
+    print(f"  verdict: {'PASS' if abs(corr) < H2H_CORR_MAX else 'FAIL'}")
+
+    print("\nSTEP 3 - market Brier reference (2018+)")
+    mb = market_brier(df)
+    print(f"  market Brier: {mb:.4f} (leaked dataset: 0.1974; repaired reference: 0.2035)")
+    print("  A leak-free model must not beat the market Brier without a reason.")
+
+    if BETS.exists():
+        bets = pd.read_csv(BETS)
+        if {"prob", "won"} <= set(bets.columns):
+            model_b = _brier(bets["prob"], bets["won"])
+            print("\nSTEP 4 - model vs market Brier on the logged bets")
+            print(f"  bets: {len(bets):,}")
+            print(f"  model Brier:  {model_b:.4f}")
+            if "market_prob" in bets.columns:
+                market_b = _brier(bets["market_prob"], bets["won"])
+                print(f"  market Brier: {market_b:.4f}")
+                print(f"  delta (model - market): {model_b - market_b:+.4f} "
+                      "(positive = worse than the market)")
+    else:
+        print("\nSTEP 4 - skipped: no walkforward_bets.csv yet")
+
+    ok = dup["passed"] and abs(corr) < H2H_CORR_MAX
+    print("\n" + ("ALL CHECKS PASSED" if ok else "LEAK CHECKS FAILED"))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

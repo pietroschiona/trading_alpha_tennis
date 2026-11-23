@@ -1,4 +1,5 @@
 from tqdm import tqdm
+import re
 import sys
 import random
 import xgboost as xgb
@@ -25,7 +26,7 @@ K = keras.backend
 # ------------------------
 # DATASET & PERCORSI
 # ------------------------
-BASE_DIR = os.getcwd()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_FILE = os.path.join(BASE_DIR, "tennis_features_v36.csv")
 # Pinnacle Opening/Closing scraped CSV (~1 GB, gitignored; absent in clean checkouts)
 SCRAPER_CSV = os.path.join(BASE_DIR, "data", "tennis_odds_data_cleaned.csv")
@@ -181,10 +182,24 @@ class HybridDataLoader:
     3-Layer Data Merge for Hydra-Oracle:
     Layer 1 (BASE): TML matches → ALL matches for ELO calculation
     Layer 2 (ODDS): tennis-data.co.uk → PSW/PSL as Pinnacle Closing
-    Layer 3 (ENRICH): scraped CSV → Pin_Open where available (86.86%)
+    Layer 3 (ENRICH): scraped CSV → Pin_Open where available
 
-    NO SYNTHETIC ODDS - Model is hybrid (works with or without Opening)
+    Opening odds are the morning input; closing odds (MaxW/MaxL) are only the
+    evening calibration target.  If opening odds are unavailable the caller must
+    opt into the degraded closing-fallback mode explicitly (see main()).
     """
+
+    BOOKMAKER_PRIORITY = [
+        'Pinnacle',      # Most efficient, primary
+        'bet365',        # Major, reliable
+        'Betfair',       # Exchange prices
+        'Unibet',        # Good coverage
+        '10Bet',         # Good coverage
+        'Betway',        # Backup
+        'BetVictor',     # Backup
+        'Betsafe',       # Backup
+        'Betsson',       # Backup
+    ]
 
     def __init__(self):
         self.scraper_df = None
@@ -206,20 +221,28 @@ class HybridDataLoader:
 
         chunks = []
         try:
+            # Only the priority bookmakers matter.  Filtering while reading keeps
+            # the 5.8M-row CSV from becoming a multi-GB DataFrame.
+            pattern = '|'.join(re.escape(b) for b in self.BOOKMAKER_PRIORITY)
             for chunk in pd.read_csv(SCRAPER_CSV,
-                                     usecols=['url', 'date_str', 'player_1', 'player_2',
-                                              'bookmaker', 'selection', 'opening_odd', 'closing_odd'],
+                                     usecols=['date_str', 'player_1', 'player_2',
+                                              'bookmaker', 'selection', 'opening_odd'],
                                      chunksize=500000,
                                      low_memory=False):
-                # Keep ALL bookmakers with opening odds
-                chunk_valid = chunk[chunk['opening_odd'].notna()]
-                chunks.append(chunk_valid)
+                chunk = chunk[chunk['opening_odd'].notna()]
+                chunk = chunk[chunk['selection'].isin(
+                    ['Selection_1', 'Selection_2'])]
+                keep = chunk['bookmaker'].astype(str).str.contains(
+                    pattern, case=False, regex=True, na=False)
+                chunk_valid = chunk[keep]
+                if not chunk_valid.empty:
+                    chunks.append(chunk_valid)
 
             if chunks:
                 self.scraper_df = pd.concat(chunks, ignore_index=True)
                 self.scraper_loaded = True
                 Log.ok(
-                    f"Loaded {len(self.scraper_df)} opening odds rows from all bookmakers")
+                    f"Loaded {len(self.scraper_df)} opening odds rows from priority bookmakers")
 
                 # Show bookmaker breakdown
                 bm_counts = self.scraper_df.groupby(
@@ -257,36 +280,29 @@ class HybridDataLoader:
         if self.scraper_df is None:
             return
 
-        # Bookmaker priority for opening odds (most accurate first)
-        self.BOOKMAKER_PRIORITY = [
-            'Pinnacle',      # Most efficient, primary
-            'bet365',        # Major, reliable
-            'Betfair',       # Exchange prices
-            'Unibet',        # Good coverage
-            '10Bet',         # Good coverage
-            'Betway',        # Backup
-            'BetVictor',     # Backup
-            'Betsafe',       # Backup
-            'Betsson',       # Backup
-        ]
-
         # Parse date
         self.scraper_df['parsed_date'] = pd.to_datetime(
             self.scraper_df['date_str'], format='%d.%m.%Y', errors='coerce')
+        self.scraper_df = self.scraper_df.dropna(
+            subset=['parsed_date', 'player_1', 'player_2']).copy()
 
-        # Extract normalized names
-        self.scraper_df['surname_p1'] = self.scraper_df['player_1'].apply(
-            self._normalize_name)
-        self.scraper_df['surname_p2'] = self.scraper_df['player_2'].apply(
-            self._normalize_name)
+        # Normalise each unique name once, then map (the CSV has millions of
+        # rows but only a few thousand distinct players).
+        name_map = {}
+        for col in ('player_1', 'player_2'):
+            for name in self.scraper_df[col].astype(str).unique():
+                if name not in name_map:
+                    name_map[name] = self._normalize_name(name)
 
-        # Create match key (date + sorted surnames)
-        def make_key(row):
-            d = str(row['parsed_date'])[:10]
-            names = sorted([row['surname_p1'], row['surname_p2']])
-            return f"{d}_{names[0]}_{names[1]}"
+        p1 = self.scraper_df['player_1'].astype(str).map(name_map)
+        p2 = self.scraper_df['player_2'].astype(str).map(name_map)
+        first = p1.where(p1 <= p2, p2)
+        second = p2.where(p1 <= p2, p1)
+        dates = self.scraper_df['parsed_date'].dt.strftime('%Y-%m-%d')
 
-        self.scraper_df['match_key'] = self.scraper_df.apply(make_key, axis=1)
+        self.scraper_df['surname_p1'] = p1
+        self.scraper_df['surname_p2'] = p2
+        self.scraper_df['match_key'] = dates + '_' + first + '_' + second
 
         # Create per-bookmaker index
         self.odds_by_bookmaker = {}
@@ -633,14 +649,18 @@ def enrich_features_residual(raw_df, scaler_fit=False, scaler=None):
     )
 
     if has_opening:
-        # Usa Opening dove disponibile, altrimenti fallback a Closing
-        df['morning_odds_W'] = df['Pin_Open_W'].fillna(df['MaxW'])
-        df['morning_odds_L'] = df['Pin_Open_L'].fillna(df['MaxL'])
-
-        # Track coverage
-        opening_coverage = df['Pin_Open_W'].notna().mean() * 100
-        Log.info(
-            "ODDS", f"Opening odds coverage: {opening_coverage:.1f}% (fallback to Closing for rest)")
+        # Never substitute closing odds for a missing morning price: that is a
+        # leak.  Restrict the modelling sample to matches with a real opening.
+        missing = df['Pin_Open_W'].isna() | df['Pin_Open_L'].isna()
+        n_missing = int(missing.sum())
+        if n_missing:
+            Log.warn(
+                f"{n_missing} matches lack opening odds; excluding them from the "
+                "modelling sample instead of substituting closing odds (leak)")
+            df = df[~missing].copy()
+        df['morning_odds_W'] = df['Pin_Open_W']
+        df['morning_odds_L'] = df['Pin_Open_L']
+        Log.info("ODDS", "Opening odds coverage: 100.0% after exclusion")
     else:
         # No opening odds available - use closing for both phases
         # (mattina == sera per le quote, nessuna distinzione possibile)
@@ -1187,6 +1207,8 @@ def walk_forward_rl_hydra(df, cols_A, cols_B, cols_PHY, cols_MKT, target_col, de
                             'match': names_day[i],
                             'odds': odds,
                             'prob': my_prob,
+                            'market_prob': float(mkt_prob),
+                            'opening_odds': float(odds),
                             'stake_head': stake_head,
                             'pnl_head': pnl_head,
                             'won': won
@@ -1522,6 +1544,8 @@ def write_results(path, equity_dict, bets, dataset_meta, opening_coverage, confi
         f"Dataset sha256: {dataset_meta.get('sha256', 'unknown')}",
         f"Dataset date range: {dataset_meta.get('date_min', '?')}..{dataset_meta.get('date_max', '?')}",
         f"Opening odds coverage: {opening_coverage:.1f}%",
+        f"Data mode: {config.get('data_mode', 'unknown')}",
+        f"Modeling rows: {config.get('modeling_rows', 0)}",
         f"Period: {config.get('betting_start_year', '?')}-{config.get('end_year', '?')}",
         f"Bets: {total_bets}",
         f"Wins: {wins}/{total_bets} ({win_rate:.1f}%)",
@@ -1581,17 +1605,39 @@ def main():
     try:
         raw_df = pd.read_csv(DATASET_FILE, low_memory=False)
 
-        # STEP 1: Enrich with Opening odds from scraped CSV (~1 GB, optional)
-        if os.environ.get("TRADING_ALPHA_DISABLE_OPENING_ODDS") == "1":
+        # STEP 1: Enrich with Opening odds from scraped CSV (~1 GB).
+        # The default is the honest mode: opening odds are required, and matches
+        # without them are dropped rather than silently priced with closing odds.
+        allow_fallback = (
+            os.environ.get("TRADING_ALPHA_ALLOW_CLOSING_FALLBACK") == "1"
+            or os.environ.get("TRADING_ALPHA_DISABLE_OPENING_ODDS") == "1"
+        )
+        if allow_fallback:
             Log.warn(
-                "TRADING_ALPHA_DISABLE_OPENING_ODDS=1 - using closing odds only")
+                "DEGRADED MODE: closing odds used as morning odds. Results are "
+                "NOT a test of the morning/evening architecture.")
             opening_coverage = 0.0
         else:
+            if not os.path.exists(SCRAPER_CSV):
+                Log.err(
+                    f"Opening odds CSV missing: {SCRAPER_CSV}. Re-run with "
+                    "TRADING_ALPHA_ALLOW_CLOSING_FALLBACK=1 only for a clearly "
+                    "labelled degraded run.")
+                return 1
             loader = HybridDataLoader()
             raw_df = loader.enrich_with_opening_odds(raw_df)
             opening_coverage = (
                 float(raw_df["has_pin_open"].mean() * 100)
                 if "has_pin_open" in raw_df.columns else 0.0)
+            if opening_coverage <= 0.0:
+                Log.err(
+                    "Opening odds CSV loaded but no match was paired: refusing "
+                    "to run a closing-only backtest silently.")
+                return 1
+            raw_df = raw_df[raw_df["has_pin_open"] == 1].copy()
+            Log.ok(
+                f"Modelling sample restricted to {len(raw_df)} matches with "
+                f"opening odds (raw coverage {opening_coverage:.1f}%)")
 
         # Dataset provenance sidecar (written by data_pipeline.py)
         if os.path.exists(META_FILE):
@@ -1618,6 +1664,8 @@ def main():
             "end_year": int(df_data['Date'].dt.year.max()),
             "seed": RNG_SEED,
             "num_loops": NUM_LOOPS,
+            "data_mode": "closing_fallback" if allow_fallback else "opening_odds",
+            "modeling_rows": int(len(raw_df)),
         }
 
         best_profit_head = -99999
