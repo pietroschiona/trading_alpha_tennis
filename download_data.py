@@ -70,7 +70,8 @@ def main():
 
     # Optional: opening odds, ~1 GB, only obtainable by scraping (see scraper/)
     if "--odds" not in sys.argv[1:]:
-        print("Quote opening (~1 GB) opzionali e non cercate: passare --odds per abilitarle.")
+        print("Quote opening (~1 GB) opzionali per il rebuild del dataset, ma OBBLIGATORIE")
+        print("  per il run canonico di hydra_model (senza, main() esce con codice 1).")
         print("  Il dataset si ricostruisce con le sole closing odds (2013-2025).")
     else:
         for path in [TARGET_PATH, os.path.expanduser("~/tennis_odds_data_cleaned.csv")]:

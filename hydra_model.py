@@ -1572,6 +1572,14 @@ def write_manifest(path, results, dataset_meta, config):
 
 
 def _code_commit():
+    """Commit that produced the run.
+
+    A container may not ship git, so the launcher can pass the value explicitly:
+    TRADING_ALPHA_CODE_COMMIT=$(git rev-parse --short HEAD) on the host.
+    """
+    env_commit = os.environ.get("TRADING_ALPHA_CODE_COMMIT", "").strip()
+    if env_commit:
+        return env_commit
     try:
         commit = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"], cwd=BASE_DIR,

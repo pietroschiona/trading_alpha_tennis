@@ -6,11 +6,20 @@ pytest.importorskip("tensorflow")
 
 from hydra_model import (
     _build_swapped_sample,
+    _code_commit,
     _market_prob_index,
     _swap_market_context,
     compute_ewma_features,
     write_results,
 )
+
+def test_code_commit_prefers_the_launcher_value(monkeypatch):
+    monkeypatch.setenv("TRADING_ALPHA_CODE_COMMIT", "abc123")
+    assert _code_commit() == "abc123"
+
+def test_code_commit_never_returns_an_empty_string(monkeypatch):
+    monkeypatch.delenv("TRADING_ALPHA_CODE_COMMIT", raising=False)
+    assert _code_commit()
 
 def test_compute_ewma_does_not_use_future_values():
     df = pd.DataFrame({

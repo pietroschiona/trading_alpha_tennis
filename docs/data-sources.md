@@ -1,57 +1,116 @@
-# Fonti dati — confronto e scelta
+# Data sources
 
-Casò d'uso: value betting ATP 2013–2025; opening odds = feature (smart money bias),
-closing odds = target/calibrazione. Confronto eseguito 2026-10-01.
+Use case: ATP value betting 2013-2025. Opening odds are a pre-match feature; closing odds
+are a calibration target. Comparison run on 2026-10-01 and re-measured on 2026-11-23 with
+the loader used by `hydra_model.py`.
 
-## Tabella comparativa
+## Comparison
 
-| Criterio | Scraper tennisexplorer (`scraper/`) | OddsHarvester (OddsPortal) | tennis-data.co.uk | The Odds API |
+| Criterion | tennisexplorer scraper (`scraper/`) | OddsHarvester (OddsPortal) | tennis-data.co.uk | The Odds API |
 |---|---|---|---|---|
-| Opening odds storiche | Sì (Pinnacle ~88.7% fino dic 2025) | Sì (`--odds-history`) | **No** | Solo da giu 2020 |
-| Closing odds | Parziale | Sì | **Eccellente** (PSW/PSL ~99%, MaxW/AvgW = aggregati Oddsportal al **closing**) | Sì |
-| Costo | 0 | 0 | 0 | Free 500 cred/mese; storico paid |
-| Sforzo | Già nel repo | Basso (pip) | Quasi nullo (xlsx annuali) | Basso (REST) |
-| Rischio blocco | Medio | Medio-alto (anti-bot OddsPortal) | Nessuno | Nessuno |
-| Update fresche | Da scrivere | Sì (`upcoming`) | Settimanale | Real-time |
+| Historical opening odds | Yes, Pinnacle + 8 secondary books | Yes (`--odds-history`) | **No** | Only from 2020-06-06 |
+| Closing odds | Partial | Yes | **Excellent** (PSW/PSL ~99%, `MaxW/AvgW` are Oddsportal aggregates at **closing**) | Yes |
+| Cost | 0 | 0 | 0 | 500 credits/month free; history paid |
+| Effort | Already in the repo | Low (pip) | Almost none (annual xlsx) | Low (REST) |
+| Blocking risk | Medium | Medium-high (OddsPortal anti-bot) | None | None |
+| Fresh updates | To be written | Yes (`upcoming`) | Weekly | Real-time |
 
-Fatti verificati:
-- tennis-data `MaxW`/`AvgW` **non sono opening** — notes.txt: aggregati Oddsportal "most recent
-  before play starts", cioè closing. https://www.tennis-data.co.uk/notes.txt
-- OddsHarvester attivo (owner jordantete, tennis supportato): https://github.com/jordantete/OddsHarvester
-- The Odds API storico solo da 6 giu 2020, paid: https://the-odds-api.com/historical-odds-data/
+Verified facts:
 
-## Scelta: stack a 3 livelli
+- tennis-data `MaxW`/`AvgW` are **not** opening odds: they are Oddsportal "most recent
+  before play starts" aggregates, i.e. closing. https://www.tennis-data.co.uk/notes.txt
+- OddsHarvester is active (owner jordantete, tennis supported):
+  https://github.com/jordantete/OddsHarvester
+- The Odds API history starts 2020-06-06 and is paid:
+  https://the-odds-api.com/historical-odds-data/
 
-1. **tennis-data.co.uk** — base closing 2013–2025 (file annuali in `data/match_odds/`, già scaricati).
-   Zero sforzo, Pinnacle ~99%.
-2. **Scraper tennisexplorer** (`scraper/`) — unica fonte free di **opening** Pinnacle pre-2020;
-   dataset già prodotto: `data/tennis_odds_data_cleaned.csv` (~1 GB, non è in git).
-   Per odds fresche: update settimanale.
-3. **OddsHarvester** — backfill gap dell'88.7% + fallback se tennisexplorer cambia layout.
-   Feature flag `opening_missing` + imputazione quando manca.
+## Chosen stack
 
-Opzionale: The Odds API free tier per le odds pre-match dei match di domani (500 cred/mese bastano).
+1. **tennis-data.co.uk** — closing baseline 2013-2025 (`data/match_odds/`, annual xlsx).
+   Pinnacle `PSW`/`PSL` coverage ~99%. Used for calibration, never for morning inference.
+2. **tennisexplorer scraper** (`scraper/`) — the only free source of pre-2020 Pinnacle
+   **opening** odds found. Output: `data/tennis_odds_data_cleaned.csv` (~1 GB, not in git).
+   Every match in the feature dataset gets at most one opening line, from a bookmaker
+   priority list (Pinnacle first).
+3. **OddsHarvester** — planned backfill for the missing opening-odds coverage and a
+   fallback if tennisexplorer changes layout. Not wired into the pipeline yet; when it is,
+   it must respect the same one-to-one merge rules.
 
-## Pipeline dei dati
+Optional: The Odds API free tier for next-day matches (500 credits/month).
+
+## Measured opening-odds coverage
+
+Computed by `HybridDataLoader.enrich_with_opening_odds()` on the published dataset
+(29,535 matches). A match is covered only when both opening prices exist.
 
 ```
-data/atp_matches_TML/   ← TML-Database (github.com/Tennismylife/TML-Database), 2000–2025
-data/match_odds/        ← tennis-data.co.uk annuali 2013–2025 (xlsx)
-data/tennis_odds_data_cleaned.csv ← scraped, ~1 GB (non è in git)
+overall   71.3%   (21,069 / 29,535)
+Pinnacle  62.5%   (18,457 matches)
+bet365    5.7%    (1,696)
+Betfair   2.7%    (811)
+other     0.4%    (105 across Unibet, 10Bet, BetVictor, Betway, Betsafe)
+none      28.7%   (8,466)
 ```
 
-Scaricare i raw: `python download_data.py`.
+| Year | Coverage |
+|---|---|
+| 2012 | 30.8% (partial year) |
+| 2013 | 82.8% |
+| 2014 | 80.2% |
+| 2015 | 81.3% |
+| 2016 | 71.7% |
+| 2017 | 77.7% |
+| 2018 | 78.6% |
+| 2019 | 70.5% |
+| 2020 | 68.5% |
+| 2021 | 70.0% |
+| 2022 | 67.4% |
+| 2023 | 62.3% |
+| 2024 | 57.8% |
+| 2025 | 59.0% |
 
-URL da usare (verificati 2026-10-01, il path di tennis-data cambia nel tempo):
+Earlier notes claimed "Pinnacle ~88.7%". That figure counted coverage only among matches
+that already had a scraped line, not among all matches: the honest denominator is the
+full dataset, hence 71.3% overall. The canonical run drops uncovered matches instead of
+pricing them with closing odds.
 
-| Sorgente | Pattern | Note |
+## Data pipeline
+
+```
+data/atp_matches_TML/                  <- TML-Database (2024 missing), 2000-2025
+data/match_odds/                       <- tennis-data.co.uk annual xlsx, 2013-2025
+data/tennis_odds_data_cleaned.csv      <- scraped opening odds, ~1 GB (not in git)
+```
+
+Download the raw sources:
+
+```bash
+python download_data.py
+```
+
+URLs verified on 2026-10-01 (tennis-data paths change over time):
+
+| Source | Pattern | Notes |
 |---|---|---|
-| TML-Database | `https://raw.githubusercontent.com/Tennismylife/TML-Database/master/<anno>.csv` | CSV **alla root** del repo, non in `csv/` |
-| tennis-data.co.uk | `http://tennis-data.co.uk/<segmento_offuscato>/<anno>/<anno>.xlsx` | il segmento cambia: rileggilo su [data.php](https://www.tennis-data.co.uk/data.php). Serve un `User-Agent`, altrimenti 403. |
-| odds 2000–2012 | `.../<anno>/<anno>.xls` | `.xls`, non `.xlsx`; il 2000 è solo risultati, senza quote |
+| TML-Database | `https://raw.githubusercontent.com/Tennismylife/TML-Database/master/<year>.csv` | CSVs at the repo root, not in `csv/` |
+| tennis-data.co.uk | `http://tennis-data.co.uk/<obfuscated-segment>/<year>/<year>.xlsx` | the segment rotates: copy it from [data.php](https://www.tennis-data.co.uk/data.php). A `User-Agent` header is required, otherwise 403 |
+| odds 2000-2012 | `.../<year>/<year>.xls` | `.xls`, not `.xlsx`; 2000 has results only |
 
-Rigenerazione dataset: `python data_pipeline.py` → `tennis_features_v36.csv`
-(con fix anti-leakage: merge one-to-one nearest-date, identity check sui set vinti dal
-vincitore, dedup su chiave reale, `DATE_TOLERANCE_DAYS = 7`).
+Rebuild the dataset:
 
-Verifica obbligatoria prima di credere a qualsiasi numero: `python verify_leak_fix.py`.
+```bash
+python data_pipeline.py
+```
+
+It writes `tennis_features_v36.csv` (20 MB) and `tennis_features_v36.meta.json`
+(rows, date range, sha256, tolerance). The sidecar is tracked in git; the CSV is not.
+
+Anti-leakage rules applied by the pipeline: one-to-one nearest-date merge, identity check
+on the sets won by the winner, dedup on the real `(date, winner, loser)` key,
+`DATE_TOLERANCE_DAYS = 7`.
+
+Mandatory check before trusting any number:
+
+```bash
+python verify_leak_fix.py
+```

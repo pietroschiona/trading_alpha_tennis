@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: "Hydra-Oracle: tennis ATP value-betting research (post-mortem release)"
+message: "If you use this code or its data pipeline, cite the repository."
+type: software
+authors:
+  - family-names: Schiona
+    given-names: Pietro
+version: 1.0.0
+date-released: 2026-11-23
+license: Apache-2.0
+repository-code: "https://github.com/pietroschiona/trading_alpha_tennis"
+abstract: >-
+  A leak-free walk-forward pipeline for ATP match prediction and betting
+  simulation. The release documents a data-leakage post-mortem: the historical
+  63% win rate was an artifact of a defective odds-to-match merge, and the
+  repaired system shows no demonstrated edge over the market.
+keywords:
+  - tennis
+  - sports betting
+  - machine learning
+  - data leakage
+  - walk-forward validation

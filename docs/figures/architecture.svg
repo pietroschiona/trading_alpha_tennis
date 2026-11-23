@@ -59,7 +59,7 @@
   <rect x="44" y="482" width="310" height="86" class="box boxData"/>
   <text x="58" y="506" class="t">tennis_features_v36.csv</text>
   <text x="58" y="525" class="s">29,535 matches · 2012-12-31 .. 2025-11-16</text>
-  <text x="58" y="543" class="s">84 columns · sha256 in the sidecar</text>
+  <text x="58" y="543" class="s">83 columns · sha256 in the sidecar</text>
   <text x="58" y="561" class="src">tennis_features_v36.meta.json</text>
 
   <text x="44" y="600" class="label">AUDIT BEFORE ANY NUMBER</text>
@@ -117,10 +117,10 @@
   <text x="856" y="407" class="src">class OddsDebiaser</text>
 
   <rect x="842" y="436" width="314" height="84" class="box boxEvening"/>
-  <text x="856" y="460" class="t">CUSUM + calibrator</text>
-  <text x="856" y="479" class="s">monitor drift, isotonic probability map</text>
-  <text x="856" y="497" class="s">retrain: NN 7 d · XGB 14 d · debiaser 30 d</text>
-  <text x="856" y="511" class="src">CUSUMDriftDetector · ProbabilityCalibrator</text>
+  <text x="856" y="460" class="t">Retraining schedule</text>
+  <text x="856" y="479" class="s">neural net every 7 d, XGBoost every 14 d</text>
+  <text x="856" y="497" class="s">debiaser every 30 d, on the past buffer only</text>
+  <text x="856" y="511" class="src">RETRAIN_DEEP_DAYS · RETRAIN_XGB_DAYS · RETRAIN_DEBIASER_DAYS</text>
 
   <rect x="842" y="540" width="314" height="80" class="box boxEvening"/>
   <text x="856" y="564" class="t">Honest scorecard</text>

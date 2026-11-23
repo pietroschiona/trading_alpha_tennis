@@ -1,0 +1,18 @@
+[project]
+name = "trading-alpha-tennis"
+version = "1.0.0"
+description = "Leak-free walk-forward ATP tennis research, published as a post-mortem"
+requires-python = ">=3.10,<3.13"
+license = { text = "Apache-2.0" }
+readme = "README.md"
+authors = [{ name = "Pietro Schiona" }]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4", "pytest-cov==4.1"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
