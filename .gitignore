@@ -41,17 +41,20 @@ walkforward_run*.log
 .superpowers/
 .worktrees/
 
-# Generated model artifacts
+# Generated model artifacts (weights are not portable between TF versions)
 model_state/
 charts/
-benchmarks/
-walkforward_results.txt
-walkforward_bets.csv
-walkforward_manifest.json
+
+# Canonical run artifacts ARE published: walkforward_results.txt,
+# walkforward_bets.csv, walkforward_manifest.json and benchmarks/
+# are the evidence behind every number in the README.
 tennis_features_v36*.meta.json
 
 # Local data (re-downloadable)
 data/
+
+# Adversarial review sessions (local only)
+.adversarial-review/
 
 # Python env
 venv/

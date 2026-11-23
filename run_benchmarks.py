@@ -370,6 +370,82 @@ def run_market_brier(csv_path) -> float:
     return leak_checks.market_brier(df)
 
 
+def _outcome_series(bets) -> pd.Series:
+    return bets["won"].astype(str).str.lower().isin(["true", "1", "1.0"]).astype(float)
+
+
+def brier_metrics(bets) -> dict:
+    """Brier score of the model and of the market on the *same* logged bets.
+
+    The market probability is the debiased opening probability recorded by the
+    runner (`market_prob`).  Old bet logs without that column fall back to the
+    raw implied probability `1/odds`, which is a conservative upper bound.
+    """
+    unavailable = {"available": False}
+    if bets is None or len(bets) == 0 or not {"prob", "won"} <= set(bets.columns):
+        return unavailable
+
+    y = _outcome_series(bets)
+    p = pd.to_numeric(bets["prob"], errors="coerce")
+    keep = p.notna() & y.notna()
+    if keep.sum() == 0:
+        return unavailable
+    y, p = y[keep], p[keep]
+    out = {
+        "available": True,
+        "n": int(keep.sum()),
+        "model_brier": float(((p - y) ** 2).mean()),
+        "market_brier": None,
+        "market_source": None,
+        "delta": None,
+    }
+
+    if "market_prob" in bets.columns:
+        m = pd.to_numeric(bets["market_prob"], errors="coerce")[keep]
+        source = "market_prob"
+    elif "odds" in bets.columns:
+        m = (1.0 / pd.to_numeric(bets["odds"], errors="coerce"))[keep]
+        source = "implied_1_over_odds"
+    else:
+        m = None
+    if m is not None:
+        m = m.where(np.isfinite(m))
+        valid = m.notna()
+        if valid.any():
+            out["market_brier"] = float(((m[valid] - y[valid]) ** 2).mean())
+            out["market_source"] = source
+            out["delta"] = out["model_brier"] - out["market_brier"]
+    return out
+
+
+def calibration_metrics(bets, n_bins: int = 10) -> dict:
+    """Reliability table and expected calibration error (ECE) for the model."""
+    unavailable = {"available": False}
+    if bets is None or len(bets) == 0 or not {"prob", "won"} <= set(bets.columns):
+        return unavailable
+    y = _outcome_series(bets)
+    p = pd.to_numeric(bets["prob"], errors="coerce")
+    keep = p.notna() & y.notna()
+    if keep.sum() == 0:
+        return unavailable
+    p, y = p[keep].to_numpy(), y[keep].to_numpy()
+
+    edges = np.linspace(0.0, 1.0, n_bins + 1)
+    bins = []
+    ece = 0.0
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        mask = (p >= lo) & (p < hi if hi < 1.0 else p <= hi)
+        n = int(mask.sum())
+        if n == 0:
+            continue
+        mean_p = float(p[mask].mean())
+        win_rate = float(y[mask].mean())
+        bins.append({"lo": float(lo), "hi": float(hi), "n": n,
+                     "mean_prob": mean_p, "win_rate": win_rate})
+        ece += (n / len(p)) * abs(mean_p - win_rate)
+    return {"available": True, "n": int(len(p)), "ece": float(ece), "bins": bins}
+
+
 # --------------------------------------------------------------------------
 # Report
 # --------------------------------------------------------------------------
@@ -458,6 +534,45 @@ def format_report(tests: dict, results: dict) -> str:
             "`walkforward_bets.csv` is missing or has no usable stake/pnl rows.",
             "",
             "**Edge demonstrated: NOT MEASURED** - no per-bet returns to test.",
+        ])
+
+    scores = tests.get("scores") or {}
+    if scores.get("available"):
+        market_txt = ("n/a" if scores.get("market_brier") is None
+                      else f"{scores['market_brier']:.4f} ({scores['market_source']})")
+        delta_txt = ("n/a" if scores.get("delta") is None
+                     else f"{scores['delta']:+.4f}")
+        lines.extend([
+            "", "## Probability quality (same bets)",
+            "",
+            "| Metric | Value |",
+            "|---|---|",
+            f"| Bets with a probability | {scores['n']} |",
+            f"| Model Brier | {scores['model_brier']:.4f} |",
+            f"| Market Brier | {market_txt} |",
+            f"| Delta (model - market) | {delta_txt} |",
+            "",
+            "A positive delta means the model is *worse* than the market on the "
+            "exact bets it chose. Win rate alone cannot show this.",
+        ])
+
+    cal = tests.get("calibration") or {}
+    if cal.get("available"):
+        lines.extend([
+            "", "### Calibration (reliability)",
+            "",
+            f"Expected calibration error: **{cal['ece']:.4f}** over {cal['n']} bets.",
+            "",
+            "| Predicted bin | Bets | Mean predicted | Observed win rate |",
+            "|---|---:|---:|---:|",
+        ])
+        for b in cal["bins"]:
+            lines.append(f"| {b['lo']:.1f}-{b['hi']:.1f} | {b['n']} | "
+                         f"{b['mean_prob']:.3f} | {b['win_rate']:.3f} |")
+        lines.extend([
+            "",
+            "Bins below the diagonal are overconfident: the model says 45% and "
+            "wins 36%. That gap is the leak-free result, not a tuning problem.",
         ])
 
     if brier is not None and not (isinstance(brier, float) and math.isnan(brier)):
@@ -679,6 +794,15 @@ def main() -> int:
               f"({ret['n_bets']} bets)")
     else:
         print(f"  NOT MEASURED - {BETS_PATH.name} missing or unusable")
+
+    tests["scores"] = brier_metrics(bets)
+    tests["calibration"] = calibration_metrics(bets)
+    if tests["scores"].get("available"):
+        s = tests["scores"]
+        market = (f"{s['market_brier']:.4f} ({s['market_source']})"
+                  if s.get("market_brier") is not None else "n/a")
+        print(f"  model Brier {s['model_brier']:.4f} vs market {market} "
+              f"on {s['n']} bets")
 
     # -------------------------------------------------------------- integrity
     print("Running Tests 6-7 (duplicate and h2h integrity checks)...")

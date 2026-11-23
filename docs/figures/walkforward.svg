@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 340" role="img" aria-labelledby="title desc">
+  <title id="title">Walk-forward validation timeline</title>
+  <desc id="desc">The model is trained on 2013 to 2016, then bets out of sample from 2017 to 2025. The neural network is retrained every 7 days, XGBoost every 14 days and the odds debiaser every 30 days, always using only matches that have already been played.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
+    </marker>
+  </defs>
+
+  <rect width="1100" height="340" fill="#ffffff"/>
+  <text x="32" y="38" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="22" font-weight="700" fill="#0f172a">Walk-forward: no row from the future</text>
+  <text x="32" y="60" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#475569">The same chronological loop is used for every match. Retraining is periodic, never shuffled.</text>
+
+  <!-- Axis -->
+  <line x1="70" y1="190" x2="1030" y2="190" stroke="#334155" stroke-width="2" marker-end="url(#a)"/>
+  <text x="1036" y="195" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" fill="#64748b">time</text>
+
+  <!-- Warmup -->
+  <rect x="70" y="112" width="280" height="54" rx="8" fill="#dbeafe" stroke="#60a5fa" stroke-width="1.5"/>
+  <text x="90" y="136" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#1e3a8a">Warmup · 2013-2016</text>
+  <text x="90" y="154" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11.5" fill="#1e40af">ELO, EWMA and h2h are built here; no bets.</text>
+
+  <!-- Betting -->
+  <rect x="350" y="112" width="560" height="54" rx="8" fill="#dcfce7" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="370" y="136" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#166534">Out-of-sample betting · 2017-2025</text>
+  <text x="370" y="154" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11.5" fill="#14532d">Each day is predicted before its results are added to the buffers.</text>
+
+  <!-- Ticks -->
+  <g font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="10.5" fill="#64748b" text-anchor="middle">
+    <line x1="70" y1="166" x2="70" y2="190" stroke="#94a3b8"/><text x="70" y="208">2013</text>
+    <line x1="140" y1="166" x2="140" y2="190" stroke="#94a3b8"/><text x="140" y="208">2014</text>
+    <line x1="210" y1="166" x2="210" y2="190" stroke="#94a3b8"/><text x="210" y="208">2015</text>
+    <line x1="280" y1="166" x2="280" y2="190" stroke="#94a3b8"/><text x="280" y="208">2016</text>
+    <line x1="350" y1="166" x2="350" y2="190" stroke="#94a3b8"/><text x="350" y="208">2017</text>
+    <line x1="420" y1="166" x2="420" y2="190" stroke="#94a3b8"/><text x="420" y="208">2018</text>
+    <line x1="490" y1="166" x2="490" y2="190" stroke="#94a3b8"/><text x="490" y="208">2019</text>
+    <line x1="560" y1="166" x2="560" y2="190" stroke="#94a3b8"/><text x="560" y="208">2020</text>
+    <line x1="630" y1="166" x2="630" y2="190" stroke="#94a3b8"/><text x="630" y="208">2021</text>
+    <line x1="700" y1="166" x2="700" y2="190" stroke="#94a3b8"/><text x="700" y="208">2022</text>
+    <line x1="770" y1="166" x2="770" y2="190" stroke="#94a3b8"/><text x="770" y="208">2023</text>
+    <line x1="840" y1="166" x2="840" y2="190" stroke="#94a3b8"/><text x="840" y="208">2024</text>
+    <line x1="910" y1="166" x2="910" y2="190" stroke="#94a3b8"/><text x="910" y="208">2025</text>
+  </g>
+
+  <!-- Cut -->
+  <line x1="350" y1="96" x2="350" y2="230" stroke="#0f766e" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="356" y="92" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#0f766e">first bet</text>
+
+  <!-- Retrain callouts -->
+  <rect x="388" y="242" width="220" height="48" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="400" y="262" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#0f172a">Neural net</text>
+  <text x="400" y="279" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" fill="#475569">retrain every 7 days</text>
+
+  <rect x="628" y="242" width="220" height="48" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="640" y="262" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#0f172a">XGBoost</text>
+  <text x="640" y="279" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" fill="#475569">retrain every 14 days</text>
+
+  <rect x="868" y="242" width="180" height="48" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="880" y="262" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#0f172a">OddsDebiaser</text>
+  <text x="880" y="279" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" fill="#475569">every 30 days</text>
+
+  <text x="32" y="322" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10.5" fill="#64748b">Sources: hydra_model.py (BETTING_START_YEAR, RETRAIN_DEEP_DAYS, RETRAIN_XGB_DAYS, RETRAIN_DEBIASER_DAYS); walk_forward_rl_hydra().</text>
+</svg>

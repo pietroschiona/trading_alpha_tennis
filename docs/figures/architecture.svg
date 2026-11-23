@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Hydra-Oracle architecture: data, morning inference, evening calibration</title>
+  <desc id="desc">Data flows from ATP match files and two odds sources through a one-to-one merge into a feature dataset. Opening odds feed the morning model (Siamese network, XGBoost residual corrector, supervised stake head, risk caps). After each match, the outcome and closing odds feed the evening learners, which retrain the morning model on a walk-forward schedule.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrowDashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"/>
+    </marker>
+    <style>
+      .box { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.5; rx: 10; }
+      .boxData { fill: #eff6ff; stroke: #93c5fd; }
+      .boxMorning { fill: #f0fdf4; stroke: #86efac; }
+      .boxEvening { fill: #fff7ed; stroke: #fdba74; }
+      .lane { fill: #f1f5f9; stroke: #e2e8f0; stroke-width: 1; rx: 14; }
+      .h { font: 700 15px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #0f172a; }
+      .t { font: 13px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #0f172a; }
+      .s { font: 11.5px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #475569; }
+      .src { font: 10.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #64748b; }
+      .arrow { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .dashed { stroke: #0f766e; stroke-width: 2; stroke-dasharray: 7 5; fill: none; marker-end: url(#arrowDashed); }
+      .label { font: 700 10.5px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #0f766e; letter-spacing: 0.04em; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="760" fill="#ffffff"/>
+  <text x="32" y="38" class="h" font-size="22">Hydra-Oracle: morning inference, evening calibration</text>
+  <text x="32" y="60" class="s">A leak-free walk-forward pipeline. One row in the feature table is one real match; every historical feature uses only earlier dates.</text>
+
+  <!-- Lanes -->
+  <rect x="24" y="84" width="350" height="600" class="lane"/>
+  <rect x="398" y="84" width="400" height="600" class="lane"/>
+  <rect x="822" y="84" width="354" height="600" class="lane"/>
+
+  <text x="44" y="112" class="h">1. Data</text>
+  <text x="418" y="112" class="h">2. Morning: decide</text>
+  <text x="842" y="112" class="h">3. Evening: learn</text>
+
+  <!-- Data lane -->
+  <rect x="44" y="132" width="310" height="58" class="box boxData"/>
+  <text x="58" y="156" class="t">ATP match stats (2000-2025)</text>
+  <text x="58" y="175" class="src">data/atp_matches_TML/ · TML-Database</text>
+
+  <rect x="44" y="204" width="310" height="58" class="box boxData"/>
+  <text x="58" y="228" class="t">Closing odds (2013-2025)</text>
+  <text x="58" y="247" class="src">data/match_odds/ · tennis-data.co.uk</text>
+
+  <rect x="44" y="276" width="310" height="58" class="box boxData"/>
+  <text x="58" y="300" class="t">Opening odds (scraped)</text>
+  <text x="58" y="319" class="src">data/tennis_odds_data_cleaned.csv · 71.3% matched</text>
+
+  <rect x="44" y="360" width="310" height="96" class="box boxData"/>
+  <text x="58" y="384" class="t">smart_merge(): one-to-one</text>
+  <text x="58" y="403" class="s">nearest date (±7 d) + sets-won identity check</text>
+  <text x="58" y="421" class="s">dedup on (Date, winner, loser)</text>
+  <text x="58" y="441" class="src">data_pipeline.py · DATE_TOLERANCE_DAYS = 7</text>
+
+  <rect x="44" y="482" width="310" height="86" class="box boxData"/>
+  <text x="58" y="506" class="t">tennis_features_v36.csv</text>
+  <text x="58" y="525" class="s">29,535 matches · 2012-12-31 .. 2025-11-16</text>
+  <text x="58" y="543" class="s">84 columns · sha256 in the sidecar</text>
+  <text x="58" y="561" class="src">tennis_features_v36.meta.json</text>
+
+  <text x="44" y="600" class="label">AUDIT BEFORE ANY NUMBER</text>
+  <rect x="44" y="612" width="310" height="56" class="box"/>
+  <text x="58" y="633" class="s">verify_leak_fix.py</text>
+  <text x="58" y="651" class="src">0 duplicate rows · corr(h2h, outcome) = 0.094</text>
+
+  <!-- Morning lane -->
+  <rect x="418" y="132" width="360" height="76" class="box boxMorning"/>
+  <text x="432" y="156" class="t">Opening price at decision time</text>
+  <text x="432" y="175" class="s">fair_prob_A = 1/odds_A ÷ (1/odds_A + 1/odds_B)</text>
+  <text x="432" y="193" class="src">hydra_model.py · enrich_features_residual()</text>
+
+  <rect x="418" y="228" width="360" height="84" class="box boxMorning"/>
+  <text x="432" y="252" class="t">Blind Analyst (Siamese towers)</text>
+  <text x="432" y="271" class="s">Player A vs Player B · shared weights</text>
+  <text x="432" y="289" class="s">ELO, EWMA, surface, physical context</text>
+  <text x="432" y="303" class="src">build_hydra_model_blind_analyst()</text>
+
+  <rect x="418" y="332" width="360" height="76" class="box boxMorning"/>
+  <text x="432" y="356" class="t">XGBoost residual corrector</text>
+  <text x="432" y="375" class="s">fits outcome − morning market probability</text>
+  <text x="432" y="393" class="s">positive residual = market may under-price</text>
+  <text x="432" y="404" class="src">EnsemblePredictor.apply_xgb_veto()</text>
+
+  <rect x="418" y="428" width="360" height="76" class="box boxMorning"/>
+  <text x="432" y="452" class="t">Supervised stake head</text>
+  <text x="432" y="471" class="s">input: analyst + market context</text>
+  <text x="432" y="489" class="s">output: fraction of bankroll (0-5%)</text>
+  <text x="432" y="500" class="src">not PPO / not policy gradient</text>
+
+  <rect x="418" y="524" width="360" height="96" class="box boxMorning"/>
+  <text x="432" y="548" class="t">Risk and execution</text>
+  <text x="432" y="567" class="s">edge &gt; 1% · XGB veto · Kelly reference</text>
+  <text x="432" y="585" class="s">liquidity cap · €5,000 hard cap · 2% slippage</text>
+  <text x="432" y="603" class="s">bankroll floor: a ruined book stops betting</text>
+  <text x="432" y="614" class="src">walk_forward_rl_hydra()</text>
+
+  <!-- Evening lane -->
+  <rect x="842" y="132" width="314" height="76" class="box boxEvening"/>
+  <text x="856" y="156" class="t">Match result</text>
+  <text x="856" y="175" class="s">outcome ∈ {0, 1}</text>
+  <text x="856" y="193" class="src">never available in the morning</text>
+
+  <rect x="842" y="228" width="314" height="84" class="box boxEvening"/>
+  <text x="856" y="252" class="t">Value head: BCE on outcomes</text>
+  <text x="856" y="271" class="s">target = actual result, not closing odds</text>
+  <text x="856" y="289" class="s">symmetry: A→B and B→A samples</text>
+  <text x="856" y="303" class="src">walk_forward_rl_hydra() evening buffers</text>
+
+  <rect x="842" y="332" width="314" height="84" class="box boxEvening"/>
+  <text x="856" y="356" class="t">OddsDebiaser (Ridge)</text>
+  <text x="856" y="375" class="s">opening probability → closing probability</text>
+  <text x="856" y="393" class="s">closing odds are a calibration target only</text>
+  <text x="856" y="407" class="src">class OddsDebiaser</text>
+
+  <rect x="842" y="436" width="314" height="84" class="box boxEvening"/>
+  <text x="856" y="460" class="t">CUSUM + calibrator</text>
+  <text x="856" y="479" class="s">monitor drift, isotonic probability map</text>
+  <text x="856" y="497" class="s">retrain: NN 7 d · XGB 14 d · debiaser 30 d</text>
+  <text x="856" y="511" class="src">CUSUMDriftDetector · ProbabilityCalibrator</text>
+
+  <rect x="842" y="540" width="314" height="80" class="box boxEvening"/>
+  <text x="856" y="564" class="t">Honest scorecard</text>
+  <text x="856" y="583" class="s">ROI + bootstrap CI · Brier model vs market</text>
+  <text x="856" y="601" class="s">calibration table · per-bet CSV</text>
+  <text x="856" y="612" class="src">walkforward_results.txt · walkforward_bets.csv</text>
+
+  <!-- Arrows -->
+  <line x1="354" y1="170" x2="418" y2="170" class="arrow"/>
+  <line x1="354" y1="520" x2="418" y2="252" class="arrow"/>
+  <line x1="354" y1="520" x2="418" y2="560" class="arrow"/>
+  <line x1="354" y1="520" x2="842" y2="170" class="arrow"/>
+  <line x1="354" y1="520" x2="842" y2="270" class="arrow"/>
+  <line x1="354" y1="520" x2="842" y2="374" class="arrow"/>
+  <line x1="778" y1="360" x2="842" y2="374" class="arrow"/>
+  <line x1="778" y1="470" x2="842" y2="478" class="arrow"/>
+
+  <!-- Feedback loop -->
+  <path d="M 842 580 C 790 650, 600 650, 560 610" class="dashed"/>
+  <text x="600" y="676" class="label">retrain on past matches only</text>
+
+  <!-- Footer -->
+  <text x="32" y="716" class="s">Walk-forward: 2013-2016 warmup, 2017-2025 out-of-sample. Matches without a real opening price are excluded, not filled with closing odds.</text>
+  <text x="32" y="736" class="src">Sources: data_pipeline.py (smart_merge, write_dataset_metadata), hydra_model.py (HybridDataLoader, enrich_features_residual, walk_forward_rl_hydra), run_benchmarks.py.</text>
+</svg>

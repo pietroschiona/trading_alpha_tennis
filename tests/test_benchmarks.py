@@ -4,7 +4,13 @@ import pandas as pd
 import pytest
 
 import run_benchmarks
-from run_benchmarks import _edge_verdict, bootstrap_roi, load_results
+from run_benchmarks import (
+    _edge_verdict,
+    bootstrap_roi,
+    brier_metrics,
+    calibration_metrics,
+    load_results,
+)
 
 
 def test_load_results_parses_provenance(tmp_path):
@@ -47,6 +53,31 @@ def test_bootstrap_roi_reports_unavailable_on_empty_or_missing_columns():
     assert bootstrap_roi(empty)["available"] is False
     assert bootstrap_roi(pd.DataFrame({"date": ["2020-01-01"]}))["available"] is False
     assert bootstrap_roi(None)["available"] is False
+
+def test_brier_metrics_compares_model_and_market_on_same_bets():
+    bets = pd.DataFrame({
+        "prob": [0.7, 0.3],
+        "won": [True, False],
+        "market_prob": [0.6, 0.4],
+    })
+    scores = brier_metrics(bets)
+    assert scores["available"] is True
+    assert scores["model_brier"] == pytest.approx(0.09)
+    assert scores["market_brier"] == pytest.approx(0.16)
+    assert scores["delta"] == pytest.approx(-0.07)
+
+def test_brier_metrics_is_unavailable_without_probabilities():
+    assert brier_metrics(pd.DataFrame({"won": [True]})) == {"available": False}
+    assert calibration_metrics(None) == {"available": False}
+
+def test_calibration_metrics_reports_bins_and_ece():
+    bets = pd.DataFrame({"prob": [0.2, 0.8], "won": [False, True]})
+    cal = calibration_metrics(bets)
+    assert cal["available"] is True
+    assert cal["n"] == 2
+    assert len(cal["bins"]) == 2
+    # The model under-predicts both outcomes by 0.2, so ECE is 0.2.
+    assert cal["ece"] == pytest.approx(0.2)
 
 def test_edge_verdict_is_no_when_the_95pct_ci_contains_zero():
     # p <= 0.05 certifies the 90% interval, so it must not be enough on its own.
